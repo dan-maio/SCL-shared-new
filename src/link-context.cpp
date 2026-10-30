@@ -3,11 +3,14 @@
 #include "loader/dynamic-info.hpp"
 #include <cstring>
 
-extern "C" { extern loader::elf::Dyn _DYNAMIC[]; }  ///< Linker-provided.
+/// Linker-provided in a -pie image. Weak so non-PIE firmware using an external
+/// table still links; from_self() then reports an error.
+extern "C" { extern loader::elf::Dyn _DYNAMIC[] __attribute__((weak)); }
 
 namespace fw {
 
 loader::result<link_context> link_context::from_self() noexcept {
+    if (!_DYNAMIC) return loader::unexpected(loader::error::SYMBOL_NOT_FOUND);
     // _DYNAMIC is an array terminated by DT_NULL; bound it generously for parse().
     std::span<const std::byte> dyn_bytes{
         reinterpret_cast<const std::byte*>(_DYNAMIC), sizeof(loader::elf::Dyn) * 64};
