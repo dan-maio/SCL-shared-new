@@ -158,6 +158,10 @@ plus an IPC layer, not SCL symbol resolution.
   `thread_local` modules.
 - MPU region programming is application responsibility.
 - `dlerror` state in the hosted facade is global, not thread-local.
-- No multi-core hardware test exists in this repository; the host tests cover
-  the table APIs, not concurrency.
+- `SCL-TESTS-shared-new/pico2-pizero-shared` tests boot-time loading on a dual-core
+  RP2350. Loading or unloading while both cores run is untested.
+- A module that runs from flash must not import through a PLT, which reads a GOT in
+  flash. Build it with `-mlong-calls`, so imports go through the RAM GOT via `r10`.
+- RP2350 has no global exclusive monitor: `LDREX`/`STREX` in a module do not protect
+  data shared across cores. Import a lock from main instead.
 - Cache overrides are examples; the core defaults only issue barriers.

@@ -33,7 +33,7 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 | MPU programming | **Guidance** | `docs/RTOS-MULTICORE.md` §3/§7 |
 | TLS for dynamic loaders | **Not implemented** | `scl::static` TLS remains the supported path |
 | Per-core arena allocator | **Not implemented** | `fw::image_arena()` is still global |
-| Multi-core hardware validation | **Not done** | No board test in this repository |
+| Multi-core hardware validation | **Done for boot-time load** | `SCL-TESTS-shared-new/pico2-pizero-shared` (RP2350, µOS++ SMP) |
 
 ## What was changed relative to SCL-shared
 
