@@ -8,6 +8,7 @@
 #include "loader/detail/bytes.hpp"     // load_word / name_at
 #include "scl/os-hooks.h"
 #include "scl/log.h"
+#include "scl/unwind-exidx.h"
 #include "scl/cache.h"
 
 #include <cstring>
@@ -231,6 +232,54 @@ error apply_relocs(module& m, loader::symbol_source und) noexcept {
     return error::OK;
 }
 
+constexpr uint32_t SHT_ARM_EXIDX = 0x70000001u;
+
+inline uint32_t prel31_target(uint32_t where, uint32_t w) noexcept {
+    const uint32_t a = (w & 0x40000000u) ? (w | 0x80000000u) : (w & 0x7fffffffu);
+    return where + a;
+}
+
+// A partial link leaves one .ARM.exidx section per function group, unsorted, but the
+// unwinder binary-searches one table. Build that table at the end of the arena and
+// register it for the whole arena. Entries hold PREL31 values, so they are recomputed.
+error register_unwind(const module* mods, int n, std::span<std::byte> arena, uint32_t& used) noexcept {
+    struct entry { uint32_t fn, tab; };   // tab: an inline word, or the extab's address
+    used = align_up(used, 8);
+    auto* table = reinterpret_cast<entry*>(arena.data() + used);
+    const uint32_t cap = static_cast<uint32_t>((arena.size() - used) / sizeof(entry));
+    uint32_t count = 0;
+    for (int k = 0; k < n; ++k) {
+        const module& m = mods[k];
+        sh_reader sh{m.image, m.shoff, m.shentsize};
+        for (uint16_t i = 0; i < m.shnum; ++i) {
+            if (sh.f(i, SH_TYPE) != SHT_ARM_EXIDX || m.sec_base[i] == 0) continue;
+            const uint32_t base = m.sec_base[i], sz = sh.f(i, SH_SIZE);
+            for (uint32_t o = 0; o + 8 <= sz; o += 8) {
+                if (count >= cap) return error::OUT_OF_MEMORY;
+                const auto* w = reinterpret_cast<const uint32_t*>(static_cast<std::uintptr_t>(base + o));
+                entry e{prel31_target(base + o, w[0]), w[1]};
+                if (e.tab != 1u && !(e.tab & 0x80000000u)) e.tab = prel31_target(base + o + 4, e.tab);
+                uint32_t j = count++;
+                for (; j > 0 && table[j - 1].fn > e.fn; --j) table[j] = table[j - 1];
+                table[j] = e;
+            }
+        }
+    }
+    const uint32_t tbase = static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(table));
+    for (uint32_t i = 0; i < count; ++i) {
+        const uint32_t at = tbase + i * 8u;
+        const uint32_t tab = table[i].tab;
+        const uint32_t fn = (table[i].fn - at) & 0x7fffffffu;
+        table[i].fn = fn;
+        if (tab != 1u && !(tab & 0x80000000u)) table[i].tab = (tab - (at + 4u)) & 0x7fffffffu;
+    }
+    used += count * sizeof(entry);
+    const uint32_t abase = static_cast<uint32_t>(reinterpret_cast<std::uintptr_t>(arena.data()));
+    dl_exidx_unregister(abase);
+    if (count) dl_exidx_register(abase, used, tbase, static_cast<int>(count));
+    return error::OK;
+}
+
 // Run @p m's .init_array constructors (now ABS32-relocated to runtime addresses).
 void run_ctors(module& m) noexcept {
     sh_reader sh{m.image, m.shoff, m.shentsize};
@@ -267,6 +316,7 @@ loader::result<module> load(std::span<const std::byte> image, std::span<std::byt
     uint32_t used = 0;
     if (auto e = place_module(image, arena, used, m); e != error::OK) return loader::unexpected(e);
     if (auto e = apply_relocs(m, resolve);            e != error::OK) return loader::unexpected(e);
+    if (auto e = register_unwind(&m, 1, arena, used); e != error::OK) return loader::unexpected(e);
     scl_cache_clean_invalidate(arena.data(), used);
     run_ctors(m);
     return m;
@@ -288,6 +338,7 @@ loader::result<module_set> load_set(std::span<const std::span<const std::byte>> 
     loader::symbol_source ss{ set_resolve, &sc };
     for (int i = 0; i < set.n; ++i)
         if (auto e = apply_relocs(set.mods[i], ss); e != error::OK) return loader::unexpected(e);
+    if (auto e = register_unwind(set.mods, set.n, arena, used); e != error::OK) return loader::unexpected(e);
     scl_cache_clean_invalidate(arena.data(), used);
     for (int i = 0; i < set.n; ++i) run_ctors(set.mods[i]); // phase 3: run all ctors
     return set;

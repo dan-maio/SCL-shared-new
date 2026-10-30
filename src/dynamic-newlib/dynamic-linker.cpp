@@ -14,6 +14,8 @@
 #include "scl/log.h"
 #include "scl/os-hooks.h"
 #include "scl/cache.h"
+#include "scl/unwind-exidx.h"
+#include "loader/exidx-fixup.hpp"
 #include <cstring>
 #include <cstdio>
 #include <new>
@@ -102,6 +104,15 @@ dynamic_linker::load_from_source(loader::byte_source& src) noexcept {
         lib->init_count = sh->sh_size / sizeof(void(*)());
     }
 
+    if (auto ex = img->find_section(".ARM.exidx"); ex && ex->sh_size) {
+        const std::uint32_t off = ex->sh_addr - lib->base_va;
+        loader::set_extab_thumb_bits(std::span<std::byte>(lib->image.base(), lib->image.size()),
+                                     off, ex->sh_size);
+        const auto img_base = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(lib->image.base()));
+        dl_exidx_register(img_base, static_cast<std::uint32_t>(lib->image.size()), img_base + off,
+                          static_cast<int>(ex->sh_size / 8u));
+    }
+
     auto ct = run_constructors(lib.get());
     if (!ct) return loader::unexpected(ct.err());
 
@@ -141,6 +152,7 @@ void dynamic_linker::unload(library* lib) noexcept {
     loader_guard guard;
     if (!lib || !lib->image.is_loaded()) return;
 
+    dl_exidx_unregister(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(lib->image.base())));
     lib->journal.revert();
     /* Prune pending relocs pointing into this library's image (dangling). */
     auto base_addr = reinterpret_cast<std::uintptr_t>(lib->image.base());
@@ -321,6 +333,8 @@ dynamic_linker::apply_plan(loader::relocation_plan& plan, std::byte* base,
             auto r = lib->journal.record(reinterpret_cast<std::byte*>(patch_site), addend);
             if (!r) return loader::unexpected(r.err());
             *patch_site = sym_addr + addend;
+            if (entry.type == loader::elf::rel_type::REL32 && sym_addr != 0)
+                *patch_site -= reinterpret_cast<std::uint32_t>(patch_site);
             break;
         }
         case loader::elf::rel_type::COPY: {

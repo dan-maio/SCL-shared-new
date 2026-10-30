@@ -73,7 +73,9 @@ Found on the Pi-Zero RP2350B and the WeAct F411CE, and not in `SCL-shared`'s doc
   in the wrong order. Extab personality pointers and the typeinfo copy in flash also needed
   fixing before programming.
 - `dl_set_lazy_binding(false)` broke cross-call, by not recording the table it reads.
-- `scl::reloc` rejected objects built with exceptions.
+- `scl::reloc` rejected objects built with exceptions, and now builds one sorted unwind table
+  at load. `scl::static`, `scl::dynamic-newlib` and `scl::optimal` now register theirs, and
+  compute `R_ARM_REL32` as `S + A - P`.
 
 ## Migrating from SCL-shared
 

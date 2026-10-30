@@ -18,6 +18,8 @@
 #include "scl/os-hooks.h"
 #include "scl/cache.h"
 #include "loader/missing-import.hpp"
+#include "loader/exidx-fixup.hpp"
+#include "scl/unwind-exidx.h"
 #include <cstring>
 #include <string_view>
 
@@ -210,9 +212,13 @@ bool load(std::span<const std::byte> blob, PModule& out) noexcept {
                 scl_log_puts("[nopic] reloc target outside windows\n");
                 return;
             }
+            // Only ABS32 has an addend: a JUMP_SLOT's word holds the PLT stub's address.
+            const bool is_rel32 = rtype == static_cast<std::uint8_t>(loader::elf::rel_type::REL32);
             const std::uint32_t addend =
-                load_word(std::span<const std::byte>{ target, 4 }, 0);
-            store_word(std::span<std::byte>{ target, 4 }, 0, value + addend);
+                rtype == static_cast<std::uint8_t>(loader::elf::rel_type::ABS32) || is_rel32
+                    ? load_word(std::span<const std::byte>{ target, 4 }, 0) : 0u;
+            store_word(std::span<std::byte>{ target, 4 }, 0,
+                       value + addend - (is_rel32 ? r_off : 0u));
             ++patched;
         });
     }
@@ -232,6 +238,12 @@ bool load(std::span<const std::byte> blob, PModule& out) noexcept {
     // Register BEFORE constructors so a ctor can call another loaded module.
     for (auto& slot : g_modules)
         if (!slot) { slot = &out; break; }
+
+    if (auto ex = img.find_section(".ARM.exidx"); ex && ex->sh_size) {
+        loader::set_extab_thumb_bits(std::span<std::byte>(text, text_memsz),
+                                     ex->sh_addr - text_vaddr, ex->sh_size);
+        dl_exidx_register(text_vaddr, text_memsz, ex->sh_addr, static_cast<int>(ex->sh_size / 8u));
+    }
 
     scl_cache_clean_invalidate(reinterpret_cast<const void*>(text_vaddr), text_memsz);
     scl_cache_clean_invalidate(reinterpret_cast<const void*>(data_vaddr), data_memsz);
@@ -364,6 +376,7 @@ void patch_main(const PModule& m) noexcept {
 
 void unload(PModule& m) noexcept {
     loader_guard guard;
+    dl_exidx_unregister(static_cast<std::uint32_t>(m.text_base));
     for (auto& slot : g_modules)
         if (slot == &m) slot = nullptr;
     m = PModule{};

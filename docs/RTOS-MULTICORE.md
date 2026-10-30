@@ -168,8 +168,7 @@ plus an IPC layer, not SCL symbol resolution.
 - Cross-call lookups take the loader lock on every call, on every core. Use a real
   recursive lock with cross-call on SMP.
 - Exceptions: this toolchain's `libstdc++` is `Thread model: single`, so one global state is
-  shared. Throw under a lock. Only `dynamic-nolib` and the three XIP adapters register unwind
-  tables. Link the full `libsupc++` with `--specs=nano.specs`, keep `.ARM.exidx` as its own
+  shared. Throw under a lock. Every loader except `scl::overlay` registers unwind tables. Link the full `libsupc++` with `--specs=nano.specs`, keep `.ARM.exidx` as its own
   output section, and pass `flash_base` when provisioning a flash module.
 - A PLT in a flash module reads a GOT in flash, which the loader cannot patch. Either
   prelink the image before programming it (`patch_main_imports()`, `bind_host_imports()`),

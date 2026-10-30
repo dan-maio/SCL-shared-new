@@ -69,7 +69,7 @@ add_library(scl::self-resolve ALIAS scl-self-resolve)
 
 # ---- scl::reloc — RAM / ET_REL  (case: relocatable) --------------------------
 add_library(scl-reloc INTERFACE EXCLUDE_FROM_ALL)
-target_sources(scl-reloc INTERFACE ${SCL}/src/reloc/reloc-loader.cpp)
+target_sources(scl-reloc INTERFACE ${SCL}/src/reloc/reloc-loader.cpp ${SCL}/src/port/unwind-find-exidx.c)
 target_include_directories(scl-reloc INTERFACE ${SCL}/include/reloc)
 target_link_libraries(scl-reloc INTERFACE scl-common)
 add_library(scl::reloc ALIAS scl-reloc)
@@ -82,6 +82,7 @@ target_sources(scl-static INTERFACE
     ${SCL}/src/static/logger.cpp
     ${SCL}/src/static/module.cpp
     ${SCL}/src/static/tls.c
+    ${SCL}/src/port/unwind-find-exidx.c
     ${SCL}/src/symtab-runtime.cpp
     ${SCL}/src/port/os-hooks.c
     ${SCL}/src/port/cache.c)
@@ -116,6 +117,7 @@ add_library(scl::xip-static ALIAS scl-xip-static)
 add_library(scl-loader-nopic INTERFACE EXCLUDE_FROM_ALL)
 target_sources(scl-loader-nopic INTERFACE
     ${SCL}/src/xip/static/nopic.cpp
+    ${SCL}/src/port/unwind-find-exidx.c
     ${SCL}/src/image-memory.cpp)
 target_include_directories(scl-loader-nopic INTERFACE ${SCL}/include/xip ${SCL}/include/scl)
 target_link_libraries(scl-loader-nopic INTERFACE scl-xip-common scl-self-resolve)
@@ -159,6 +161,7 @@ add_library(scl-dynamic-newlib INTERFACE EXCLUDE_FROM_ALL)
 target_sources(scl-dynamic-newlib INTERFACE
     ${SCL}/src/dynamic-newlib/dynamic-linker.cpp
     ${SCL}/src/dynamic-newlib/patch-journal.cpp
+    ${SCL}/src/port/unwind-find-exidx.c
     ${SCL}/src/dynamic-newlib/image-memory.cpp
     ${SCL}/src/dynamic-newlib/link-context.cpp)
 target_include_directories(scl-dynamic-newlib INTERFACE ${SCL}/include ${SCL}/include/dynamic-newlib)

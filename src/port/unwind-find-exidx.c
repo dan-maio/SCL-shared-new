@@ -21,10 +21,10 @@ typedef unsigned _Unwind_Ptr __attribute__((__mode__(__pointer__)));
 /** @brief One EHABI index-table entry (two words, 8 bytes). main's table is
  *         delimited by the linker symbols from firmware/ldscripts/sections.ld. */
 typedef struct { unsigned w0, w1; } exidx_entry_t;
-extern exidx_entry_t __exidx_start[];  /**< First entry of main's own .ARM.exidx. */
-extern exidx_entry_t __exidx_end[];    /**< One past main's last .ARM.exidx entry. */
+extern exidx_entry_t __exidx_start[] __attribute__((weak));  /**< First entry of main's own .ARM.exidx. */
+extern exidx_entry_t __exidx_end[] __attribute__((weak));    /**< One past main's last .ARM.exidx entry. */
 
-#define DL_EXIDX_MAX 4   /**< Max simultaneously-registered loaded-image exidx tables. */
+#define DL_EXIDX_MAX 8   /**< Max simultaneously-registered loaded-image exidx tables. */
 
 /** @brief A loaded image's registered (relocated) .ARM.exidx range. */
 typedef struct {

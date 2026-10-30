@@ -5,6 +5,8 @@
 #include "loader/detail/elf-hash.hpp"
 #include "loader/elf-types.hpp"
 #include "scl/cache.h"
+#include "scl/unwind-exidx.h"
+#include "loader/exidx-fixup.hpp"
 #include <cstring>
 #include <new>
 
@@ -71,6 +73,10 @@ bool Module::build(elf_loader::elf_reader& efr,
     if (have_hash) efr.read_section_header(efr.find_section_by_name(".hash"), hash_shdr);
     if (have_fini) efr.read_section_header(efr.find_section_by_name(".fini_array"), fini_shdr);
 
+    Elf32_Shdr exidx_shdr{};
+    const bool have_exidx = efr.find_section_by_name(".ARM.exidx") != 0xFFFFFFFF;
+    if (have_exidx) efr.read_section_header(efr.find_section_by_name(".ARM.exidx"), exidx_shdr);
+
     elf_loader::shlib_loader shl((elf_loader::elf_reader&&)efr);
     auto load_err = shl.load_bin(buf, bufsz);
     if (load_err != elf_loader::loader_error::OK) {
@@ -109,6 +115,14 @@ bool Module::build(elf_loader::elf_reader& efr,
     journal_ = shl.take_journal();   // words written into main, for unload()
     delete[] sp_s;   // patch arrays live until patch_* consumed them
     delete[] sp_m;
+    if (have_exidx && exidx_shdr.sh_size) {
+        loader::set_extab_thumb_bits(
+            std::span<std::byte>(reinterpret_cast<std::byte*>(buf), bufsz),
+            exidx_shdr.sh_addr, exidx_shdr.sh_size);
+        dl_exidx_register(reinterpret_cast<uintptr_t>(buf), bufsz,
+                          reinterpret_cast<uintptr_t>(buf) + exidx_shdr.sh_addr,
+                          static_cast<int>(exidx_shdr.sh_size / 8u));
+    }
     scl_cache_clean_invalidate(buf, bufsz);
     shl.execute_constructors();
 
@@ -193,6 +207,8 @@ void Module::teardown() {
     // 4. Release the TLS template (offset stays reserved, like a real loader).
     if (tls_offset_)
         scl_tls_unregister(tls_offset_);
+
+    dl_exidx_unregister(reinterpret_cast<uintptr_t>(exec_buf_));
 
     // 5. Release the buffer.
     std::memset(exec_buf_, 0, exec_sz_);

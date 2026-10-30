@@ -440,10 +440,16 @@ uint32_t shlib_loader::patch_shlib(symbol_table* global_syms) {
             continue;
         }
 
-        // ── R_ARM_REL32 — e.g. a catch table's typeinfo in .ARM.extab ──────
-        // A self-defined target keeps its distance in a single-bias image, so the
-        // word is already right. It must not reach the absolute-value path below.
-        if (s.type == R_ARM_REL32 && s.virtual_address) {
+        // ── R_ARM_REL32 — e.g. a catch table's typeinfo in .ARM.extab: S + A - P ──
+        if (s.type == R_ARM_REL32) {
+            uint32_t val = s.virtual_address ? s.virtual_address + uintptr_t(buffer) : 0;
+            if (!val && global_syms) val = global_syms->find(s.name);
+            if (!val) val = efr_.find_symbol_address(s.name, m_main);
+            if (!val) { note_missing(s.name); ++skipped; continue; }
+            if (!in_image(go)) { ++skipped; continue; }
+            auto* addr = reinterpret_cast<uint32_t*>(&buffer[go]);
+            *addr += val - uint32_t(uintptr_t(addr));
+            s.applied = true;
             ++patched;
             continue;
         }
