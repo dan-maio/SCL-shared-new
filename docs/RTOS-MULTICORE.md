@@ -176,7 +176,6 @@ plus an IPC layer, not SCL symbol resolution.
 - RP2350 has no global exclusive monitor: `LDREX`/`STREX` in a module do not protect
   data shared across cores. Import a lock from main instead.
 - Cache overrides are examples; the core defaults only issue barriers.
-- Writing flash with both cores running needs the other core out of flash, and the loader does not
-  do this. `SCL-EXAMPLES-shared-new/pizero/` (`flashsmp`) shows it on the RP2350: a forced TIMER1
-  interrupt parks the other core in SRAM. Core 1 must enable coprocessor 7 first, because the
-  bootrom's flash code uses it.
+- Writing flash with both cores running needs the other core out of flash, and the loaders do
+  not do this. On the RP2350, link `scl::rp2350-flash`: `include/scl/rp2350-flash.h` has the API
+  and its rules, and `SCL-EXAMPLES-shared-new/pizero/` (`flashsmp`) uses it.

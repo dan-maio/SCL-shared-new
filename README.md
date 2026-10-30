@@ -98,12 +98,18 @@ fw::dl_set_symtab(entries, n);
 Firmware sources are cross-compiled with the ARM toolchain (the xPack
 `arm-none-eabi-g++`), not with the host compiler.
 
+## Writing flash with both cores running
+
+On the RP2350, link `scl::rp2350-flash`. While one core erases or programs, it parks the other in
+SRAM. It is optional, and is not part of any loader. `include/scl/rp2350-flash.h` has the API and
+its rules.
+
 ## Tested on
 
 | Board | CPU | Where | Result (2026-10-30) |
 |---|---|---|---|
 | WeAct F411CE + W25Q64 | Cortex-M4 | `SCL-TESTS-shared-new`, `SCL-EXAMPLES-shared-new` | 22 tests and 25 examples pass at `9f1320f` |
-| Pi-Zero RP2350B + PSRAM | 2x Cortex-M33, µOS++ SMP | `SCL-TESTS-shared-new/pico2-pizero-shared`, `SCL-EXAMPLES-shared-new/pizero` | 77 tests and 76 example firmwares pass at `9f1320f` |
+| Pi-Zero RP2350B + PSRAM | 2x Cortex-M33, µOS++ SMP | `SCL-TESTS-shared-new/pico2-pizero-shared`, `SCL-EXAMPLES-shared-new/pizero` | 77 tests pass at `9f1320f`; 76 example firmwares passed, and their re-run on `scl::rp2350-flash` is not finished |
 
 ## Further documentation
 

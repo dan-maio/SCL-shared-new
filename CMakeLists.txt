@@ -129,6 +129,12 @@ target_include_directories(scl-optimal INTERFACE ${SCL}/include/optimal)
 target_link_libraries(scl-optimal INTERFACE scl-loader-nopic)
 add_library(scl::optimal ALIAS scl-optimal)
 
+# ---- scl::rp2350-flash — flash writes with both cores running (opt-in, RP2350) ----
+add_library(scl-rp2350-flash INTERFACE EXCLUDE_FROM_ALL)
+target_sources(scl-rp2350-flash INTERFACE ${SCL}/src/port/rp2350-flash.c)
+target_include_directories(scl-rp2350-flash INTERFACE ${SCL}/include)
+add_library(scl::rp2350-flash ALIAS scl-rp2350-flash)
+
 # ---- scl::overlay — linker-overlay window manager (case: overlay) ------------
 # Portable C (the DSB/ISB barrier compiles away off-target). The application owns
 # the linker script; a template is in src/overlay/ldscripts/overlay-fragment.ld.
