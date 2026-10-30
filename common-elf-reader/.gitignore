@@ -1,0 +1,8 @@
+build/
+*.o
+*.a
+*.elf
+*.bin
+
+# Compiled host tools
+tools/elf2json
