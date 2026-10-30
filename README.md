@@ -22,6 +22,12 @@ RTOS and multi-core proposals analysed in `SCL-projects-analysis.md`.
   cache clean/invalidate hooks, `scl_publish_release()`, lock guards and cache
   maintenance on every loader.
 - **Static table helper**: `symbol_table::add_entries()`.
+- **Main tables for the XIP adapters**: `xip::stat::set_symtab()`, `xip::nolib::set_symtab()`,
+  so none of them needs a `-pie` main.
+- **C++ exceptions in XIP modules**: unwind tables are registered, and `flash_base` on
+  `patch_main_imports()` / `bind_host_imports()` prelinks what catch tables read.
+- **Missing imports reported by name**: `first_missing_import()` on every loader that allows
+  unresolved imports. Call it after loading the set; the load itself still succeeds.
 - **Host tests** for the new APIs: `./tests/run.sh`.
 
 See `docs/IMPLEMENTED-PROPOSALS.md`, `docs/BOOT-SYMTAB.md` and
@@ -91,6 +97,13 @@ fw::dl_set_symtab(entries, n);
 
 Firmware sources are cross-compiled with the ARM toolchain (the xPack
 `arm-none-eabi-g++`), not with the host compiler.
+
+## Tested on
+
+| Board | CPU | Where | Result (2026-10-30) |
+|---|---|---|---|
+| WeAct F411CE + W25Q64 | Cortex-M4 | `SCL-TESTS-shared-new`, `SCL-EXAMPLES-shared-new` | 22 tests and 25 examples pass |
+| Pi-Zero RP2350B + PSRAM | 2x Cortex-M33, µOS++ SMP | `SCL-TESTS-shared-new/pico2-pizero-shared` | 66 tests pass at `380161e` |
 
 ## Further documentation
 

@@ -772,6 +772,9 @@ See `RTOS-MULTICORE.md` for what the lock covers.
 | `xip::newlib::set_symtab(const scl_sym_entry*, ...)` | Same, for XIP newlib | `BOOT-SYMTAB.md` |
 | `xip::nopic::set_main_symbols()` | External main symbols for `scl::optimal` | `BOOT-SYMTAB.md` |
 | `symbol_table::add_entries()` | Publish a table to `scl::static` | `BOOT-SYMTAB.md` |
+| `xip::stat::set_symtab()`, `xip::nolib::set_symtab()` | External main table for those XIP adapters | `BOOT-SYMTAB.md` |
+| `first_missing_import()`, `fw::dl_first_missing_import()`, `Module::first_missing_import()` | Name the first import nothing provides; call after loading the set | `RTOS-MULTICORE.md` |
+| `flash_base` on `patch_main_imports()`, `bind_host_imports()` | Prelink the data segment's flash copy, for XIP modules that use exceptions | `RTOS-MULTICORE.md` |
 | `fw::dl_set_lazy_binding()`, `fw::dl_lazy_binding()` | Eager/lazy binding switch | `RTOS-MULTICORE.md` |
 | `scl_cache_clean()`, `scl_cache_invalidate()`, `scl_cache_clean_invalidate()`, `scl_publish_release()` | Weak cache and publication hooks | `RTOS-MULTICORE.md` |
 

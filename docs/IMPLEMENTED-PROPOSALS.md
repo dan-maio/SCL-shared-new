@@ -34,6 +34,7 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 | MPU programming | **Guidance** | `docs/RTOS-MULTICORE.md` §3/§7 |
 | TLS for dynamic loaders | **Not implemented** | `scl::static` TLS remains the supported path |
 | Per-core arena allocator | **Not implemented** | `fw::image_arena()` is still global |
+| Missing-import reporting | **Implemented** | `first_missing_import()`, `include/loader/missing-import.hpp` |
 | Multi-core hardware validation | **Done for boot-time load** | `SCL-TESTS-shared-new/pico2-pizero-shared` (RP2350, µOS++ SMP) |
 
 ## What was changed relative to SCL-shared
@@ -61,6 +62,19 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 - The unused `cmake/embed-symtab.cmake` was removed; `scl_embed_symtab()` is
   defined by the platform code in the test suites.
 
+## Fixed by testing on hardware
+
+Found on the Pi-Zero RP2350B and the WeAct F411CE, and not in `SCL-shared`'s docs:
+
+- `scl::static` ignored `.rel.plt` when a library had no `.rel.dyn`, so imports stayed
+  unpatched and the load reported success. It also dropped `R_ARM_ABS32` addends, overwrote
+  `R_ARM_REL32` words, and did not publish exports with no relocation in their own library.
+- XIP adapters never registered unwind tables, because `dl_exidx_register()` got its arguments
+  in the wrong order. Extab personality pointers and the typeinfo copy in flash also needed
+  fixing before programming.
+- `dl_set_lazy_binding(false)` broke cross-call, by not recording the table it reads.
+- `scl::reloc` rejected objects built with exceptions.
+
 ## Migrating from SCL-shared
 
 `link_context::resolve()` moved from the header to `src/link-context.cpp`. A
@@ -81,7 +95,9 @@ SCLS blob, exercise the zero-allocation collect path, check the
 `linkctx_test` verifies that `fw::link_context` prefers an externally supplied
 table.
 
-Firmware-side code was syntax-checked with:
+On hardware, see `SCL-TESTS-shared-new`: its `README.md` has the WeAct and Pi-Zero results.
+
+Firmware-side code was also syntax-checked with:
 
 ```sh
 arm-none-eabi-g++ -std=c++20 -mcpu=cortex-m4 -mthumb \

@@ -167,8 +167,13 @@ plus an IPC layer, not SCL symbol resolution.
   faults, with the name logged by the call-time lookup.
 - Cross-call lookups take the loader lock on every call, on every core. Use a real
   recursive lock with cross-call on SMP.
-- A module that runs from flash must not import through a PLT, which reads a GOT in
-  flash. Build it with `-mlong-calls`, so imports go through the RAM GOT via `r10`.
+- Exceptions: this toolchain's `libstdc++` is `Thread model: single`, so one global state is
+  shared. Throw under a lock. Only `dynamic-nolib` and the three XIP adapters register unwind
+  tables. Link the full `libsupc++` with `--specs=nano.specs`, keep `.ARM.exidx` as its own
+  output section, and pass `flash_base` when provisioning a flash module.
+- A PLT in a flash module reads a GOT in flash, which the loader cannot patch. Either
+  prelink the image before programming it (`patch_main_imports()`, `bind_host_imports()`),
+  or build with `-mlong-calls`, so imports go through the RAM GOT via `r10`.
 - RP2350 has no global exclusive monitor: `LDREX`/`STREX` in a module do not protect
   data shared across cores. Import a lock from main instead.
 - Cache overrides are examples; the core defaults only issue barriers.
