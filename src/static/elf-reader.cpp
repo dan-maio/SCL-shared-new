@@ -385,11 +385,13 @@ loader_error elf_reader::read_relocation_symbols(const pass_args& pa,
                                                 std::span<symbol_patch> ssp,
                                                 uint32_t& count_out) {
     uint32_t k = 0;
-    uint32_t num_rels = pa.reldyn_size / pa.reldyn_entry_size;
-    uint32_t num_syms = pa.dynsym_size / pa.dynsym_entry_size;
+    // A library linked by the default script has only .rel.plt, so an empty .rel.dyn
+    // is valid here; the caller then processes .rel.plt.
+    uint32_t num_rels = pa.reldyn_entry_size ? pa.reldyn_size / pa.reldyn_entry_size : 0;
+    uint32_t num_syms = pa.dynsym_entry_size ? pa.dynsym_size / pa.dynsym_entry_size : 0;
 
-    if (!pa.reldyn_start || !pa.dynsym_start || !pa.dynstr_start) {
-        log_error("missing relocation/dynsym/dynstr data");
+    if (!pa.dynsym_start || !pa.dynstr_start) {
+        log_error("missing dynsym/dynstr data");
         return loader_error::INVALID_RELOCATION;
     }
 
