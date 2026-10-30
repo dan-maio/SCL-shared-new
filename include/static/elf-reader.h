@@ -75,6 +75,7 @@ struct symbol_patch {
     uint8_t type{0};
     uint16_t index{0};
     uint8_t binding{0};
+    bool applied{false};   ///< RELATIVE/ABS32 already added to the word.
 };
 
 /// One word written into MAIN's memory during load (address + the value it held

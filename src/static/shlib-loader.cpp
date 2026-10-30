@@ -345,9 +345,13 @@ uint32_t shlib_loader::patch_shlib(symbol_table* global_syms) {
     };
 
     for (uint32_t j = 0; j < sh_patch_nbr; ++j) {
-        const auto& s = sh_sp[j];
+        auto& s = sh_sp[j];
 
         const uint32_t go = s.got_address;
+
+        // This pass may run more than once, to bind imports a later symbol table provides.
+        // RELATIVE and ABS32 add to the word, so each must be applied only once.
+        if (s.applied) { ++patched; continue; }
 
         // ── R_ARM_RELATIVE — add the image base to the in-place value ──────
         // Must be checked before the empty-name guard: R_ARM_RELATIVE
@@ -359,6 +363,7 @@ uint32_t shlib_loader::patch_shlib(symbol_table* global_syms) {
             }
             auto* addr = reinterpret_cast<uint32_t*>(&buffer[go]);
             *addr += uintptr_t(buffer);
+            s.applied = true;
             log_info("  %02u REL    %s %s",
                       j, log::hex(uintptr_t(addr)), log::hex(*addr));
             ++patched;
@@ -426,6 +431,7 @@ uint32_t shlib_loader::patch_shlib(symbol_table* global_syms) {
             }
             auto* addr = reinterpret_cast<uint32_t*>(&buffer[go]);
             *addr += val;   // S + A: e.g. a typeinfo's vptr is its vtable + 8
+            s.applied = true;
             log_info("  %02u ABS32  %s %s -> %s  %.*s",
                       j, log::binding_str(s.binding),
                       log::hex(uintptr_t(addr)), log::hex(*addr),
