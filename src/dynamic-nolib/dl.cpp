@@ -302,7 +302,7 @@ loader::result<handle*> dlopen_source(loader::byte_source& src, const char* rawn
     // ambiguous on Cortex-M) and rely only on PLTn, which puts &GOT[n] in ip before
     // `ldr pc,[GOT[n]]` -- so the resolver still learns which slot it is. dl_fixup patches the
     // slot, so subsequent calls jump straight to the target and bypass the resolver.
-    if (g_lazy_binding) {
+    {
         std::uint32_t rd_addr = 0;
         auto reldyn = sec_in_image(g_sc, mem, ".rel.dyn", rd_addr);
         if (!reldyn.empty()) {
@@ -311,12 +311,14 @@ loader::result<handle*> dlopen_source(loader::byte_source& src, const char* rawn
             using loader::detail::for_each_rel;
             const std::uint32_t resolver = static_cast<std::uint32_t>(
                 reinterpret_cast<std::uintptr_t>(&dl_runtime_resolve)) | 1u;
-            for_each_rel(reldyn, [&](std::uint32_t r_off, std::uint32_t r_info) {
-                if (loader::elf::r_type(r_info) ==
-                    static_cast<std::uint8_t>(loader::elf::rel_type::JUMP_SLOT))
-                    store_word(mem, r_off, resolver);
-            });
-            // Stash the tables dl_fixup needs (spans into the arena image; live until dlclose).
+            if (g_lazy_binding)
+                for_each_rel(reldyn, [&](std::uint32_t r_off, std::uint32_t r_info) {
+                    if (loader::elf::r_type(r_info) ==
+                        static_cast<std::uint8_t>(loader::elf::rel_type::JUMP_SLOT))
+                        store_word(mem, r_off, resolver);
+                });
+            // Keep the tables in both modes: dl_fixup and the cross-call router read them
+            // (spans into the arena image; live until dlclose).
             h->lazy = loader::lazy_tables{reldyn, dynsym, dynstr};
         }
     }

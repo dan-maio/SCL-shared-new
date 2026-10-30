@@ -160,6 +160,12 @@ plus an IPC layer, not SCL symbol resolution.
 - `dlerror` state in the hosted facade is global, not thread-local.
 - `SCL-TESTS-shared-new/pico2-pizero-shared` tests boot-time loading on a dual-core
   RP2350. Loading or unloading while both cores run is untested.
+- Load after static constructors. The loaders' globals are C++ objects, so a load from
+  an earlier constructor is wiped when they are constructed.
+- Under cross-call, a symbol missing from main's table is not reported at load: the
+  call faults at `PC=0`.
+- Cross-call lookups take the loader lock on every call, on every core. Use a real
+  recursive lock with cross-call on SMP.
 - A module that runs from flash must not import through a PLT, which reads a GOT in
   flash. Build it with `-mlong-calls`, so imports go through the RAM GOT via `r10`.
 - RP2350 has no global exclusive monitor: `LDREX`/`STREX` in a module do not protect

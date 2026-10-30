@@ -54,6 +54,8 @@ Items that need a board, an MPU map or an RTOS remain guidance.
   `optimal` (through `xip::nopic`) also gained `set_main_symbols()`.
 - Weak lock hooks moved from `static/module.cpp` to `src/port/os-hooks.c` so all
   loaders share them.
+- Cross-call now works with eager binding: `dlopen_source` always records the
+  `.rel.dyn` table the router reads, and only the re-arming depends on the mode.
 - `scl-common` now also builds `symtab-runtime`, `os-hooks` and `cache`.
 - The unused `cmake/embed-symtab.cmake` was removed; `scl_embed_symtab()` is
   defined by the platform code in the test suites.
