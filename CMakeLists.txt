@@ -81,7 +81,9 @@ target_sources(scl-static INTERFACE
     ${SCL}/src/static/shlib-loader.cpp
     ${SCL}/src/static/logger.cpp
     ${SCL}/src/static/module.cpp
-    ${SCL}/src/static/tls.c)
+    ${SCL}/src/static/tls.c
+    ${SCL}/src/port/os-hooks.c
+    ${SCL}/src/port/cache.c)
 target_include_directories(scl-static INTERFACE ${SCL}/include ${SCL}/include/static)
 target_link_libraries(scl-static INTERFACE common-elf-reader::elf-reader)
 add_library(scl::static ALIAS scl-static)
