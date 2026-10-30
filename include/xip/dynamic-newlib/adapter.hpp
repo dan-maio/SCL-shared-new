@@ -20,6 +20,10 @@ void set_symtab(const firmware::sym_entry* entries, std::size_t count) noexcept;
 /// Same, for tables produced by scl::symtab or SCL_REGISTER_SYM (layout-identical).
 void set_symtab(const scl_sym_entry* entries, std::size_t count) noexcept;
 
+/// Check after loading the whole set: the name of the first import that neither a loaded
+/// module nor main provides, or nullptr. Such an import only faults when it is called.
+[[nodiscard]] const char* first_missing_import() noexcept;
+
 /// Load `so_image` (flash-resident bytes). `name` seeds the handle's short name.
 /// Returns an opaque handle, or nullptr on failure.
 void* dlopen(std::span<const std::byte> so_image, const char* name) noexcept;

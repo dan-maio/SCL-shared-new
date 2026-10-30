@@ -416,6 +416,7 @@ uint32_t shlib_loader::patch_shlib(symbol_table* global_syms) {
                 if (!val) {
                     log_warn("  %02u ABS32 %.*s NOT FOUND", j,
                               int(s.name.size()), s.name.data());
+                    note_missing(s.name);
                     ++skipped; continue;
                 }
             }
@@ -449,10 +450,11 @@ uint32_t shlib_loader::patch_shlib(symbol_table* global_syms) {
                 // External: look up in the global table, then main's symbols.
                 if (global_syms) val = global_syms->find(s.name);
                 if (!val)        val = efr_.find_symbol_address(s.name, m_main);
-                if (!val)
+                if (!val) {
                     log_warn("  %02u external %.*s NOT FOUND", j,
                               int(s.name.size()), s.name.data());
-                else resolved = true;
+                    note_missing(s.name);
+                } else resolved = true;
             } else {
                 val = s.virtual_address + uintptr_t(buffer);   // self-defined
                 resolved = true;

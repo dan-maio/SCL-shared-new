@@ -57,6 +57,9 @@ public:
     void allocate_patch_arrays(std::span<symbol_patch> ssp_shlib, std::span<symbol_patch> ssp_main);
 
     uint32_t patch_shlib(symbol_table* global_syms);
+
+    /// First import patch_shlib() could not resolve, or "" if none.
+    const char* first_missing_import() const { return missing_; }
     uint32_t patch_main(symbol_table* global_syms);
     loader_error execute_constructors();
 
@@ -96,6 +99,13 @@ public:
     section_map m_main{};
 
 private:
+    char missing_[48]{};
+    void note_missing(std::string_view name) {
+        if (missing_[0]) return;
+        const std::size_t n = name.size() < sizeof(missing_) - 1 ? name.size() : sizeof(missing_) - 1;
+        for (std::size_t i = 0; i < n; ++i) missing_[i] = name[i];
+        missing_[n] = 0;
+    }
     elf_reader efr_{};
     uint8_t* ram_main_address_{nullptr};
     uint8_t* ram_shlib_address_{nullptr};

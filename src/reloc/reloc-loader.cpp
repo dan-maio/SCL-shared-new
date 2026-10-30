@@ -7,6 +7,7 @@
 #include "loader/elf-types.hpp"
 #include "loader/detail/bytes.hpp"     // load_word / name_at
 #include "scl/os-hooks.h"
+#include "scl/log.h"
 #include "scl/cache.h"
 
 #include <cstring>
@@ -99,7 +100,13 @@ struct sym_env {
         if (shndx == SHN_UNDEF) {                     // external -> resolver
             auto nm = name_at(strtab, load_word(img, so + ST_NAME));
             auto r = resolve(nm);
-            if (!r) { ok = false; return 0; }
+            if (!r) {
+                scl_log_puts("[scl] unresolved import: ");
+                for (char c : nm) scl_log_putc(c);
+                scl_log_putc('\n');
+                ok = false;
+                return 0;
+            }
             return *r;                                // already Thumb-correct
         }
         if (shndx == SHN_ABS) return value;           // absolute

@@ -81,6 +81,10 @@ void dl_set_symtab(const scl_sym_entry* entries, std::size_t count) noexcept;
 /// Disable it for RTOS/multi-core use so no loader code runs on the first call.
 /// dl_enable_cross_call(true) still resolves external slots at call time.
 void dl_set_lazy_binding(bool on) noexcept;
+
+/// Check after loading the whole set: the name of the first import that neither a loaded
+/// library nor main provides, or nullptr. Such an import only faults when it is called.
+[[nodiscard]] const char* dl_first_missing_import() noexcept;
 bool dl_lazy_binding() noexcept;
 
 } // namespace fw

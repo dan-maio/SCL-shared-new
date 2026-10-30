@@ -162,8 +162,9 @@ plus an IPC layer, not SCL symbol resolution.
   RP2350. Loading or unloading while both cores run is untested.
 - Load after static constructors. The loaders' globals are C++ objects, so a load from
   an earlier constructor is wiped when they are constructed.
-- Under cross-call, a symbol missing from main's table is not reported at load: the
-  call faults at `PC=0`.
+- A missing import does not fail the load, because a later module may provide it. Call
+  the loader's `first_missing_import()` after loading the set: otherwise the first call
+  faults, with the name logged by the call-time lookup.
 - Cross-call lookups take the loader lock on every call, on every core. Use a real
   recursive lock with cross-call on SMP.
 - A module that runs from flash must not import through a PLT, which reads a GOT in

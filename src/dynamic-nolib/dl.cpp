@@ -3,6 +3,7 @@
 #include "scl/log.h"
 #include "scl/os-hooks.h"
 #include "scl/cache.h"
+#include "loader/missing-import.hpp"
 #include "dynamic-nolib/lazy-plt.hpp"
 
 
@@ -573,7 +574,12 @@ extern "C" std::uint64_t dl_cross_lookup(std::uint32_t got_slot_addr) noexcept {
         if (auto* linkr = main_context())
             if (auto v = linkr->resolve(name)) { target = *v; got = 0; }  // main: r10 irrelevant
     }
-    if (target == 0) return 0;
+    if (target == 0) {
+        scl_log_puts("[scl] unresolved import: ");
+        for (char c : name) scl_log_putc(c);
+        scl_log_putc('\n');
+        return 0;
+    }
 
     // Trace the GOT/PLT translation: cross-lib hops always; main targets only when verbose.
     if ((owner && g_cross_trace >= 1) || g_cross_trace >= 2) {
@@ -598,6 +604,28 @@ void dl_set_symtab(const scl_sym_entry* entries, std::size_t count) noexcept {
 }
 
 void dl_set_lazy_binding(bool on) noexcept { g_lazy_binding = on; }
+
+const char* dl_first_missing_import() noexcept {
+    loader_guard guard;
+    auto* linkr = main_context();
+    auto provided = [&](std::string_view n) {
+        for (auto& lib : g_handles) {
+            if (!lib.in_use) continue;
+            auto v = lib.resolver.address_of(n);
+            if (v.has_value() && *v != 0u) return true;
+        }
+        if (!linkr) return false;
+        auto v = linkr->resolve(n);
+        return v.has_value() && *v != 0u;
+    };
+    for (auto& h : g_handles) {
+        if (!h.in_use) continue;
+        for (const loader::lazy_tables* t : { &h.lazy, &h.lazy_plt })
+            if (const char* m = loader::find_missing_import(t->jmprel, t->dynsym, t->dynstr, provided))
+                return m;
+    }
+    return nullptr;
+}
 bool dl_lazy_binding() noexcept { return g_lazy_binding; }
 void dl_cross_trace(int level) noexcept { g_cross_trace = level; }
 

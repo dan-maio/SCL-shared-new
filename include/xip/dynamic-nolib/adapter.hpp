@@ -27,6 +27,10 @@ namespace xip::nolib {
 /// stay valid, and main's .dynsym is then not searched.
 void set_symtab(const scl_sym_entry* entries, std::size_t count) noexcept;
 
+/// Check after loading the whole set: the name of the first import that neither a loaded
+/// module nor main provides, or nullptr. Such an import only faults when it is called.
+[[nodiscard]] const char* first_missing_import() noexcept;
+
 using xip_map = xip::xip_map;
 
 /// Load `so_image` (flash-resident bytes). `name` seeds the handle's short name.

@@ -46,6 +46,10 @@ namespace xip::stat {
 /// stay valid, and main's .dynsym is then not searched.
 void set_symtab(const scl_sym_entry* entries, std::size_t count) noexcept;
 
+/// Check after loading the whole set: the name of the first import that neither a loaded
+/// module nor main provides, or nullptr. Such an import only faults when it is called.
+[[nodiscard]] const char* first_missing_import() noexcept;
+
 /// A loaded XIP module (two-base model).
 struct SModule {
     bool           ok = false;

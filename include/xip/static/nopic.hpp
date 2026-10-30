@@ -87,6 +87,10 @@ void* resolve_any(const char* name) noexcept;
  */
 void resolve_all() noexcept;
 
+/// Check after resolve_all(): the name of the first import that neither a loaded module
+/// nor main provides, or nullptr. Such an import only faults when it is called.
+[[nodiscard]] const char* first_missing_import() noexcept;
+
 /**
  * @brief Patch MAIN's own GOT/PLT so the app can call the module BY NAME.
  *

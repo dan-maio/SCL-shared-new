@@ -17,6 +17,7 @@
 #include "scl/log.h"
 #include "scl/os-hooks.h"
 #include "scl/cache.h"
+#include "loader/missing-import.hpp"
 #include <cstring>
 #include <string_view>
 
@@ -308,6 +309,17 @@ void resolve_all() noexcept {
         scl_cache_clean_invalidate(text, text_memsz);
         scl_cache_clean_invalidate(data, data_memsz);
     }
+}
+
+const char* first_missing_import() noexcept {
+    loader_guard guard;
+    auto provided = [](std::string_view n) { return resolve_any(n.data()) != nullptr; };
+    for (auto* m : g_modules) {
+        if (!m || !m->ok) continue;
+        if (const char* name = loader::find_missing_import(m->reldyn, m->dynsym, m->dynstr, provided))
+            return name;
+    }
+    return nullptr;
 }
 
 void patch_main(const PModule& m) noexcept {

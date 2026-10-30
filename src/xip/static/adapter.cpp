@@ -12,6 +12,7 @@
 #include "xip/segment-map.hpp"
 #include "xip/relocate.hpp"
 #include "../adapter-base.hpp"
+#include "loader/missing-import.hpp"
 #include "loader/elf-image.hpp"
 #include "loader/sources/memory-byte-source.hpp"
 #include "loader/detail/bytes.hpp"
@@ -393,6 +394,31 @@ void unload(SModule& m) noexcept {
     m = SModule{};
 }
 
+const char* first_missing_import() noexcept {
+    struct guard {
+        guard() noexcept  { scl_loader_lock(); }
+        ~guard() noexcept { scl_loader_unlock(); }
+    } g;
+    auto* linkr = main_ctx();
+    auto provided = [&](std::string_view n) {
+        for (auto* m : g_modules) {
+            if (!m || !m->ok) continue;
+            auto v = m->resolver.address_of(n);
+            if (v.has_value() && *v != 0u) return true;
+        }
+        if (!linkr) return false;
+        auto v = linkr->resolve(n);
+        return v.has_value() && *v != 0u;
+    };
+    for (auto* m : g_modules) {
+        if (!m || !m->ok) continue;
+        for (const auto* tbl : { &m->reldyn, &m->relplt })
+            if (const char* name = loader::find_missing_import(*tbl, m->dynsym, m->dynstr, provided))
+                return name;
+    }
+    return nullptr;
+}
+
 // ---- cross-library call resolution ----
 //
 // Entered from xip_cross_call with r12 = &flash_GOT_slot (the PLT stub loads
@@ -453,7 +479,12 @@ extern "C" std::uint64_t xip_cross_lookup(std::uint32_t got_slot_addr) noexcept 
         if (linkr)
             if (auto v = linkr->resolve(name)) { target = *v; got = 0; }
     }
-    if (target == 0) return 0;
+    if (target == 0) {
+        scl_log_puts("[scl] unresolved import: ");
+        for (char c : name) scl_log_putc(c);
+        scl_log_putc('\n');
+        return 0;
+    }
     return (static_cast<std::uint64_t>(got) << 32) | static_cast<std::uint64_t>(target | 1u);
 }
 

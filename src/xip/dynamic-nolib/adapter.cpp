@@ -3,6 +3,7 @@
 #include "xip/relocate.hpp"
 #include "xip/xip-handle.hpp"
 #include "../adapter-base.hpp"
+#include "loader/missing-import.hpp"
 #include "loader/elf-image.hpp"
 #include "loader/sources/memory-byte-source.hpp"
 #include "loader/reloc-applier.hpp"
@@ -420,8 +421,38 @@ extern "C" std::uint64_t xip_cross_lookup(std::uint32_t got_slot_addr) noexcept 
         if (linkr)
             if (auto v = linkr->resolve(name)) { target = *v; got = 0; }
     }
-    if (target == 0) return 0;
+    if (target == 0) {
+        scl_log_puts("[scl] unresolved import: ");
+        for (char c : name) scl_log_putc(c);
+        scl_log_putc('\n');
+        return 0;
+    }
     return (static_cast<std::uint64_t>(got) << 32) | static_cast<std::uint64_t>(target | 1u);
+}
+
+const char* first_missing_import() noexcept {
+    struct guard {
+        guard() noexcept  { scl_loader_lock(); }
+        ~guard() noexcept { scl_loader_unlock(); }
+    } g;
+    auto provided = [&](std::string_view n) {
+        for (auto& h : g_handles) {
+            if (!h.in_use) continue;
+            auto v = h.resolver.address_of(n);
+            if (v.has_value() && *v != 0u) return true;
+        }
+        auto* linkr = main_ctx();
+        if (!linkr) return false;
+        auto v = linkr->resolve(n);
+        return v.has_value() && *v != 0u;
+    };
+    for (auto& h : g_handles) {
+        if (!h.in_use) continue;
+        for (const auto* tbl : { &h.reldyn, &h.relplt })
+            if (const char* name = loader::find_missing_import(*tbl, h.dynsym, h.dynstr, provided))
+                return name;
+    }
+    return nullptr;
 }
 
 int patch_main_imports(std::span<std::byte> image, std::uintptr_t flash_base) noexcept {

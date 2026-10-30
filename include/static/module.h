@@ -68,6 +68,10 @@ public:
                   elf_loader::symbol_table* syms,
                   scope s = scope::GLOBAL, dep_loader load_dep = nullptr);
 
+    /// First import this load could not resolve, or nullptr. The load still succeeds; an
+    /// unresolved import only faults when it is called, so check this after loading.
+    const char* first_missing_import() const { return missing_[0] ? missing_ : nullptr; }
+
     // --- size query -------------------------------------------------------
 
     /// Number of bytes load_file() needs for its buffer (highest PT_LOAD end),
@@ -126,6 +130,7 @@ public:
     uint32_t tls_offset() const { return tls_offset_; }
 
 private:
+    char missing_[48]{};
     bool build(elf_loader::elf_reader& efr,
                uint8_t* buf, uint32_t bufsz,
                elf_loader::symbol_table* syms,

@@ -99,6 +99,12 @@ bool Module::build(elf_loader::elf_reader& efr,
     tls_offset_ = shl.tls_offset();
 
     shl.patch_shlib(syms);
+    {
+        const char* m = shl.first_missing_import();
+        std::size_t i = 0;
+        for (; m[i] && i + 1 < sizeof(missing_); ++i) missing_[i] = m[i];
+        missing_[i] = 0;
+    }
     shl.patch_main(syms);
     journal_ = shl.take_journal();   // words written into main, for unload()
     delete[] sp_s;   // patch arrays live until patch_* consumed them

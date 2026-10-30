@@ -59,6 +59,12 @@ public:
     [[nodiscard]] loader::result<void*>
     lookup(library* lib, const char* name) noexcept;
 
+    /** @brief Check after loading the whole set: the name of the first import still
+     *         unresolved, or nullptr. Such an import only faults when it is called. */
+    [[nodiscard]] const char* first_missing_import() const noexcept {
+        return pending_.empty() ? nullptr : pending_.front().name;
+    }
+
     /** @brief Access all loaded libraries (for iteration + unload in main). */
     [[nodiscard]] auto& libs() noexcept { return libs_; }
 
