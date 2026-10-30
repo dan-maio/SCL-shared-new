@@ -9,6 +9,7 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 | Proposal (analysis section) | Status | Where |
 |---|---|---|
 | Boot-time symbol table builder/view | **Implemented** | `include/scl/symtab-runtime.hpp`, `src/symtab-runtime.cpp` |
+| Buffered collector for semihosting (two section reads) | **Implemented** | `collect_buffered()` |
 | `collect()` from `.symtab`/`.strtab`, no heap | **Implemented** | same |
 | SCLS blob serializer compatible with `gen-symtab` | **Implemented** | `build_blob()` |
 | Blob view / lookup / `symbol_source` adapter | **Implemented** | `view`, `source()` |

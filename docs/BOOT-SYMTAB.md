@@ -54,9 +54,73 @@ ctx.set_symtab(reinterpret_cast<const firmware::sym_entry*>(entries), n);
 - Names point into the `names` arena, or into a memory-mapped sidecar if you
   build a view instead. Keep that storage alive as long as the loader uses it.
 
-## 2. Compile-time registration (no ELF, no parser)
+## 1b. Semihosting: read main's own ELF at boot
 
-Annotate the exports you need:
+If a debugger/host is attached, you need neither a sidecar nor a host tool: read
+the ELF you already have (`firmware.elf`) over semihosting and parse `.symtab`.
+This is the same fallback implemented by `SCL-TESTS-shared`'s `dl-impl.cpp`.
+
+Provide a `loader::byte_source` over your semihosting calls:
+
+```cpp
+class semihost_source final : public loader::byte_source {
+public:
+    semihost_source(int fd, std::size_t size) : fd_(fd), size_(size) {}
+    std::size_t size() const noexcept override { return size_; }
+
+    loader::result<void> read_at(std::size_t off,
+                                 std::span<std::byte> out) noexcept override {
+        if (semihost_seek(fd_, off) != 0) return loader::unexpected(loader::error::SHORT_READ);
+        while (!out.empty()) {
+            int n = semihost_read(fd_, out.data(), out.size());
+            if (n <= 0) return loader::unexpected(loader::error::SHORT_READ);
+            out = out.subspan(static_cast<std::size_t>(n));
+        }
+        return {};
+    }
+private:
+    int fd_; std::size_t size_;
+};
+```
+
+Then build the table with the buffered collector:
+
+```cpp
+int fd = semihost_open(FIRMWARE_ELF_PATH, "rb");   // your SYS_OPEN wrapper
+semihost_source src(fd, semihost_file_size(fd));
+
+auto img = loader::elf_image::parse(src);
+
+static scl::symtab::entry tab[2048];
+static std::byte symbuf[64 * 1024];   // >= .symtab size
+static char      strbuf[32 * 1024];   // >= .strtab size
+
+const std::size_t n = scl::symtab::collect_buffered(
+    *img, tab, 2048, symbuf, sizeof(symbuf), strbuf, sizeof(strbuf));
+
+ctx.set_symtab(reinterpret_cast<const firmware::sym_entry*>(tab), n);
+// XIP newlib: xip::newlib::set_symtab(tab, n);
+semihost_close(fd);
+```
+
+`collect_buffered()` reads `.symtab` and `.strtab` with **one read per section**,
+so it does not make a semihosting round-trip per symbol name. Keep `strbuf`
+alive: `tab[i].name` points into it.
+
+Requirements and caveats:
+
+- The host must be able to open the ELF path (typically `firmware.elf` next to
+  the `.hex`).
+- The ELF must not be stripped of `.symtab`/`.strtab`; `-O binary`/`.hex`
+  conversion does not keep them, but semihosting reads the `.elf`, not the image.
+- Keep the `-Wl,-u` anchors so borrowed symbols survive `--gc-sections` and are
+  present in `.symtab`.
+- Semihosting is a development/debug path (debugger attached, slow). For a
+  standalone product use a sidecar, registration, or PIE `.dynsym`.
+- `link_context::resolve()` is a linear scan; fine for load-time imports, not
+  for per-call `dlsym`.
+
+## 2. Compile-time registration (no ELF, no parser)Annotate the exports you need:
 
 ```c
 #include "scl/symtab-register.h"

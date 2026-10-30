@@ -60,6 +60,21 @@ int main(int argc, char** argv) {
             no_locals = false;
     check(no_locals, "filter _internals");
 
+    /* Buffered path: one read per section (the semihosting-friendly variant). */
+    static scl::symtab::entry entries_buf[4096];
+    static std::byte symbuf[64 * 1024];
+    static char strbuf[32 * 1024];
+    const std::size_t nb = scl::symtab::collect_buffered(
+        *img_r, entries_buf, 4096, symbuf, sizeof(symbuf),
+        strbuf, sizeof(strbuf));
+    check(nb == n, "buffered collect count matches");
+    check(nb > 0 && entries_buf[0].name >= strbuf &&
+              entries_buf[0].name < strbuf + sizeof(strbuf),
+          "buffered names point into strtab buffer");
+    check(nb > 0 && std::strcmp(entries_buf[0].name, entries[0].name) == 0 &&
+              entries_buf[0].addr == entries[0].addr,
+          "buffered entries match streaming entries");
+
     std::vector<std::byte> blob(8 + n * 8 + 512 * 1024);
     const std::size_t used = scl::symtab::build_blob(
         entries, n, blob.data(), blob.size(), 0);

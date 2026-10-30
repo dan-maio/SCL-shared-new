@@ -56,6 +56,18 @@ bool read_word(const std::byte* p, std::uint32_t& out) noexcept {
     return true;
 }
 
+bool keep_symbol(const loader::elf::Sym& s, std::string_view name,
+                 const filter& f) noexcept {
+    if (s.st_value == 0) return false;
+    if (s.st_shndx == 0 || s.st_shndx >= 0xFFF1) return false;
+    const std::uint8_t bind = static_cast<std::uint8_t>(s.st_info >> 4);
+    if (bind != 1 && !(bind == 2 && f.include_weak)) return false;
+    if (name.empty()) return false;
+    if (name[0] == '_' && !(f.runtime_whitelist && is_whitelisted(name)))
+        return false;
+    return true;
+}
+
 } // namespace
 
 bool whitelisted(std::string_view name) noexcept { return is_whitelisted(name); }
@@ -81,22 +93,15 @@ std::size_t detail::walk(const loader::elf_image& img, const filter& f,
             {reinterpret_cast<std::byte*>(&s), sizeof(s)});
         if (!r) break;
 
-        if (s.st_value == 0) continue;
-        if (s.st_shndx == 0 || s.st_shndx >= 0xFFF1) continue;
-
-        const std::uint8_t bind = static_cast<std::uint8_t>(s.st_info >> 4);
-        if (bind != 1 && !(bind == 2 && f.include_weak)) continue;
-
         if (!read_name(img.source(), str.sh_offset + s.st_name,
                        str.sh_offset + str.sh_size, name, sizeof(name)))
             continue;
 
         std::string_view sv{name};
-        if (sv[0] == '_' && !(f.runtime_whitelist && is_whitelisted(sv)))
-            continue;
+        if (!keep_symbol(s, sv, f)) continue;
 
         ++seen;
-        fn(ctx, sv, s.st_value, bind == 2);
+        fn(ctx, sv, s.st_value, static_cast<std::uint8_t>(s.st_info >> 4) == 2);
     }
     return seen;
 }
@@ -130,6 +135,62 @@ std::size_t collect(const loader::elf_image& img,
         }, &c);
 
     return c.n;
+}
+
+std::size_t collect_buffered(const loader::elf_image& img,
+                             entry* out, std::size_t cap,
+                             std::byte* symtab_buf, std::size_t symtab_cap,
+                             char* strtab_buf, std::size_t strtab_cap,
+                             const filter& f) noexcept {
+    auto sym_r = img.find_section(".symtab");
+    auto str_r = img.find_section(".strtab");
+    if (!sym_r || !str_r || !out || cap == 0 || !symtab_buf || !strtab_buf)
+        return 0;
+
+    const auto& sym = *sym_r;
+    const auto& str = *str_r;
+    if (sym.sh_size == 0 || sym.sh_size > symtab_cap ||
+        str.sh_size == 0 || str.sh_size > strtab_cap)
+        return 0;
+
+    if (!img.source().read_at(
+            sym.sh_offset, {symtab_buf, static_cast<std::size_t>(sym.sh_size)}))
+        return 0;
+    if (!img.source().read_at(
+            str.sh_offset,
+            {reinterpret_cast<std::byte*>(strtab_buf),
+             static_cast<std::size_t>(str.sh_size)}))
+        return 0;
+
+    const std::size_t count = sym.sh_size / sizeof(loader::elf::Sym);
+    std::size_t start = sym.sh_info;
+    if (start >= count) start = 0;
+
+    std::size_t n = 0;
+    for (std::size_t i = start; i < count && n < cap; ++i) {
+        loader::elf::Sym s{};
+        std::memcpy(&s, symtab_buf + i * sizeof(loader::elf::Sym), sizeof(s));
+
+        if (s.st_name >= str.sh_size) continue;
+        const char* name = strtab_buf + s.st_name;
+        const std::size_t max = str.sh_size - s.st_name;
+        std::size_t len = 0;
+        while (len < max && name[len] != '\0') ++len;
+        if (len == 0 || len == max || len > kMaxNameLen) continue;
+
+        std::string_view sv{name, len};
+        if (!keep_symbol(s, sv, f)) continue;
+
+        bool dup = false;
+        for (std::size_t j = 0; j < n; ++j)
+            if (std::strcmp(out[j].name, name) == 0) { dup = true; break; }
+        if (dup) continue;
+
+        out[n].name = name;
+        out[n].addr = s.st_value;
+        ++n;
+    }
+    return n;
 }
 
 std::size_t build_blob(const entry* entries, std::size_t count,

@@ -68,6 +68,16 @@ std::size_t collect(const loader::elf_image& img,
                     char* names, std::size_t names_cap,
                     const filter& f = filter{}) noexcept;
 
+/// Buffered variant: reads .symtab and .strtab into caller-provided buffers
+/// with one read per section. Suitable for slow sources such as semihosting.
+/// `out[i].name` points into `strtab_buf`, which must stay alive as long as the
+/// table is used. Returns the number of entries written.
+std::size_t collect_buffered(const loader::elf_image& img,
+                             entry* out, std::size_t cap,
+                             std::byte* symtab_buf, std::size_t symtab_cap,
+                             char* strtab_buf, std::size_t strtab_cap,
+                             const filter& f = filter{}) noexcept;
+
 /// Serialize entries into the `SCLS` blob format:
 ///   magic | count | { name_ptr, addr }[count] | NUL-terminated names
 /// `runtime_addr` is where `out` will live (used for name_ptr). Pass 0 to
