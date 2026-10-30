@@ -109,7 +109,7 @@ its rules.
 | Board | CPU | Where | Result (2026-10-30) |
 |---|---|---|---|
 | WeAct F411CE + W25Q64 | Cortex-M4 | `SCL-TESTS-shared-new`, `SCL-EXAMPLES-shared-new` | 22 tests and 25 examples pass at `9f1320f` |
-| Pi-Zero RP2350B + PSRAM | 2x Cortex-M33, µOS++ SMP | `SCL-TESTS-shared-new/pico2-pizero-shared`, `SCL-EXAMPLES-shared-new/pizero` | 77 tests pass at `9f1320f`; 76 example firmwares passed, and their re-run on `scl::rp2350-flash` is not finished |
+| Pi-Zero RP2350B + PSRAM | 2x Cortex-M33, µOS++ SMP | `SCL-TESTS-shared-new/pico2-pizero-shared`, `SCL-EXAMPLES-shared-new/pizero` | 77 tests pass at `9f1320f`; 76 example firmwares pass at `9ec0265` |
 
 ## Further documentation
 
