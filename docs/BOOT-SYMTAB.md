@@ -4,6 +4,12 @@ This fork implements the proposal analysed in `SCL-projects-analysis.md` §4.10:
 the firmware can build its name→address table at boot instead of relying on a
 post-link host tool. Two mechanisms are provided.
 
+The host tools are **still shipped and supported**: `tools/gen-symtab.cpp`
+remains the recommended build-time path for constrained products, and
+`common-elf-reader/tools/elf2json.cpp` remains the AetherELF GUI exporter. The
+paths below are alternatives for systems that cannot or do not want a post-link
+step.
+
 ## 1. Parse an ELF that is present at runtime
 
 `include/scl/symtab-runtime.hpp` walks `.symtab`/`.strtab` through the existing
@@ -165,11 +171,13 @@ magic 'SCLS' | u32 count | { u32 name_ptr, u32 addr }[count] | names
 | Situation | Use |
 |---|---|
 | Hosted dynamic loader, non-PIE main, no post-link step | Sidecar ELF + `collect()` + `dl_set_symtab`/`set_symtab` |
+| Debugger attached during development | Semihosting read of the firmware ELF + `collect_buffered()` |
 | A small, fixed export surface | `SCL_REGISTER_SYM` + `registered()` |
-| A platform already consumes the binary blob | `gen-symtab` (unchanged) or `build_blob()` |
+| A platform already consumes the binary blob | `gen-symtab` (retained) or `build_blob()` |
 | `scl::reloc` / `scl::optimal` resolver | Build a `view` and pass `scl::symtab::source(view)` |
 | `scl::static` | `symbol_table::add_entries(entries, n)` |
-| You can relink as `-pie` | Prefer `.dynsym` + `link_context::from_self()`; no table needed |
+| You can relink as `-pie` | Prefer `.dynsym` + a resolver; no table needed |
+| Inspect an ELF in the AetherELF GUI | `common-elf-reader/tools/elf2json.cpp` |
 
 ## 5. Failure modes to guard
 

@@ -7,7 +7,11 @@ RTOS and multi-core proposals analysed in `SCL-projects-analysis.md`.
 
 - **Boot-time symbol resolution** (`scl/symtab-runtime.hpp`): build a symbol
   table from a sidecar ELF at runtime with `collect()`/`build_blob()`/`view`,
-  or use the compile-time `SCL_REGISTER_SYM()` section. No host tool required.
+  semihosting or the compile-time `SCL_REGISTER_SYM()` section.
+- **Host tools retained**: `tools/gen-symtab.cpp` (build-time table for hosted
+  `dynamic-newlib`) and `common-elf-reader/tools/elf2json.cpp` (AetherELF GUI)
+  are still built and supported. The boot-time paths are an alternative, not a
+  replacement.
 - **External main table for `dynamic-nolib`**: `fw::dl_set_symtab()` removes
   the non-PIE `from_self()` requirement.
 - **Eager binding switch**: `fw::dl_set_lazy_binding(false)` keeps loader code

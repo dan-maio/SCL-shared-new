@@ -25,6 +25,7 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 | Boot-time resolution guide + sidecar linker example | **Implemented (guide)** | `docs/BOOT-SYMTAB.md`, `cmake/ldscripts/sidecar-elf-example.ld` |
 | Compile-time table linker fragment | **Implemented** | `cmake/ldscripts/scl-syms.ld` |
 | Host tests for the new APIs | **Implemented** | `tests/symtab_test.cpp`, `tests/linkctx_test.cpp`, `tests/run.sh` |
+| Host tools retained and supported | **Implemented** | `tools/gen-symtab.cpp` (build-time table), `common-elf-reader/tools/elf2json.cpp` (AetherELF GUI) |
 | Per-core loader windows | **Guidance** | `docs/RTOS-MULTICORE.md` §5 |
 | Recursive lock / dependency-loading rule | **Guidance** | `docs/RTOS-MULTICORE.md` §1 |
 | Unload quiescence / lifecycle | **Guidance** | `docs/RTOS-MULTICORE.md` §4 |
@@ -70,6 +71,14 @@ Firmware-side code was syntax-checked with:
 ```sh
 arm-none-eabi-g++ -std=c++20 -mcpu=cortex-m4 -mthumb \
   -mfloat-abi=hard -mfpu=fpv4-sp-d16 -fsyntax-only ...
+```
+
+The retained host tools were also built and smoke-tested:
+
+```sh
+cmake --build <build> --target gen-symtab-host
+cmake --build <build> --target elf2json
+<build>/tools/elf2json common-elf-reader/test/411ce-100Mhz.elf /tmp/test.json
 ```
 
 A full firmware link/run requires an application and board (or the test suites in
