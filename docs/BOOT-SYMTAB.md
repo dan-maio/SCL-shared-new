@@ -134,6 +134,11 @@ Requirements and caveats:
   `.symtab`, `strbuf` must hold `.strtab`, and `strbuf` stays allocated while the
   table is in use. If the table must persist, consider `collect()` with a smaller
   name arena instead.
+- A full ELF may not fit at all. On a WeAct F411 hosted firmware `.symtab` was
+  61 KB and `.strtab` 90 KB; `--discard-all` still left 76 KB of names. Reduce a
+  copy of the ELF to the imported symbols after linking, and read that copy:
+  `objcopy --strip-all --keep-symbol=app_gain firmware.elf firmware.sym.elf`.
+  `SCL-EXAMPLES-shared-new/api-dynamic-xip-semihost-table` does this.
 
 ## 2. Compile-time registration (no ELF, no parser)
 

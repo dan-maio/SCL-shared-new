@@ -58,6 +58,12 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 - The unused `cmake/embed-symtab.cmake` was removed; `scl_embed_symtab()` is
   defined by the platform code in the test suites.
 
+## Migrating from SCL-shared
+
+`link_context::resolve()` moved from the header to `src/link-context.cpp`. A
+project with its own copy of the old `link-context.cpp` now fails to link with an
+undefined reference to `resolve`. Delete the copy and link `scl::self-resolve`.
+
 ## Verifying
 
 ```sh
