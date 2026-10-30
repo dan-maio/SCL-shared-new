@@ -36,9 +36,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include "scl/symtab-register.h"
 #include "loader/symbol-resolver.hpp"
 
 namespace xip::stat {
+
+/// Supply main's symbols from a table (scl::symtab or SCL_REGISTER_SYM) instead of
+/// main's .dynsym, for firmware that is not -pie. Call before loading. The table must
+/// stay valid, and main's .dynsym is then not searched.
+void set_symtab(const scl_sym_entry* entries, std::size_t count) noexcept;
 
 /// A loaded XIP module (two-base model).
 struct SModule {

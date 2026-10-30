@@ -199,6 +199,7 @@ magic 'SCLS' | u32 count | { u32 name_ptr, u32 addr }[count] | names
 | `scl::reloc` | Build a `view` and pass `scl::symtab::source(view)` to `load()` |
 | `scl::optimal` | Build a `view` and call `xip::nopic::set_main_symbols(scl::symtab::source(view))` before loading |
 | `scl::static` | `symbol_table::add_entries(entries, n)` |
+| `scl::xip-static`, `scl::xip-dynamic-nolib` | `xip::stat::set_symtab(entries, n)`, `xip::nolib::set_symtab(entries, n)` |
 | You can relink as `-pie` | Prefer `.dynsym` + a resolver; no table needed |
 | Inspect an ELF in the AetherELF GUI | `common-elf-reader/tools/elf2json.cpp` |
 

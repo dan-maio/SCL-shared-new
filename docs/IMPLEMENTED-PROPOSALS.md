@@ -20,6 +20,7 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 | Boot table for `scl::static` | **Implemented** | `symbol_table::add_entries()` |
 | Central RTOS lock hooks for every loader | **Implemented** | `include/scl/os-hooks.h`, `src/port/os-hooks.c`; call sites in nolib/newlib/static/XIP/reloc/optimal/overlay |
 | External main table for `scl::optimal` | **Implemented** | `xip::nopic::set_main_symbols()` |
+| External main table for `xip::stat`, `xip::nolib` | **Implemented** | `set_symtab()` in each adapter |
 | Cache clean/invalidate hooks | **Implemented (weak defaults)** | `include/scl/cache.h`, `src/port/cache.c` |
 | Release/publication helper | **Implemented** | `scl_publish_release()` |
 | Eager binding documented for RTOS use | **Implemented** | `docs/RTOS-MULTICORE.md` |

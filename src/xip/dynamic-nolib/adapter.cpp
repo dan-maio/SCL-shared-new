@@ -22,6 +22,27 @@ extern "C" void dl_exidx_register(std::uint32_t, std::uint32_t, std::uint32_t, i
 extern "C" void dl_exidx_unregister(std::uint32_t);
 
 namespace xip::nolib {
+
+namespace {
+fw::link_context g_main_ctx;
+bool g_main_ctx_ready = false;
+}  // namespace
+
+void set_symtab(const scl_sym_entry* entries, std::size_t count) noexcept {
+    g_main_ctx.set_symtab(entries, count);
+    g_main_ctx_ready = true;
+}
+
+/// main's symbols: the table from set_symtab(), or main's .dynsym in a -pie image.
+fw::link_context* main_ctx() noexcept {
+    if (!g_main_ctx_ready) {
+        auto r = fw::link_context::from_self();
+        if (!r) return nullptr;
+        g_main_ctx = *r;
+        g_main_ctx_ready = true;
+    }
+    return &g_main_ctx;
+}
 namespace {
 
 constexpr loader::elf::word SHF_WRITE    = 0x1;
@@ -117,7 +138,7 @@ void* dlopen(std::span<const std::byte> so_image, const char* name) noexcept {
         auto reldyn  = flash_sec(".rel.dyn");
         auto relplt  = flash_sec(".rel.plt");
 
-        auto linkr = fw::link_context::from_self();
+        auto linkr = xip::nolib::main_ctx();
         if (!linkr) { fw::image_arena().free(ram); return nullptr; }
         main_resolver mr{ &*linkr };
         auto resolve = mr.source();
@@ -258,7 +279,7 @@ void* dlopen(std::span<const std::byte> so_image, const char* name) noexcept {
     auto dynstr = flash_sec(".dynstr");
     auto hashsp = flash_sec(".hash");
 
-    auto linkr = fw::link_context::from_self();
+    auto linkr = xip::nolib::main_ctx();
     if (!linkr) { fw::image_arena().free(ram); return nullptr; }
     main_resolver mr{ &*linkr };
     auto resolve = mr.source();
@@ -394,7 +415,7 @@ extern "C" std::uint64_t xip_cross_lookup(std::uint32_t got_slot_addr) noexcept 
         }
     }
     if (target == 0) {
-        auto linkr = fw::link_context::from_self();
+        auto linkr = xip::nolib::main_ctx();
         if (linkr)
             if (auto v = linkr->resolve(name)) { target = *v; got = 0; }
     }

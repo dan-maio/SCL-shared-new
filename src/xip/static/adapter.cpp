@@ -5,7 +5,7 @@
  * Built on the shared XIP primitives (xip::classify_segments / text_is_immutable
  * / apply_rel_xip from scl::xip-common) and the common-elf-reader parser.
  * Imports from the application are resolved against main's own dynamic symbol
- * table (fw::link_context::from_self()) — no hand-maintained host table. No
+ * table (fw::link_context::from_self(), or set_symtab()) — no hand-maintained host table. No
  * dynamic loader is involved.
  */
 #include "xip/static/adapter.hpp"
@@ -28,7 +28,7 @@ struct Dyn {
     int32_t d_tag;
     uint32_t d_val;
 };
-extern struct Dyn _DYNAMIC[];
+extern struct Dyn _DYNAMIC[] __attribute__((weak));   // only in a -pie image
 }
 
 /// The shared cross-library call trampoline (r10 swap; entered from a flash PLT
@@ -36,6 +36,27 @@ extern struct Dyn _DYNAMIC[];
 extern "C" void xip_cross_call(void);
 
 namespace xip::stat {
+
+namespace {
+fw::link_context g_main_ctx;
+bool g_main_ctx_ready = false;
+}  // namespace
+
+void set_symtab(const scl_sym_entry* entries, std::size_t count) noexcept {
+    g_main_ctx.set_symtab(entries, count);
+    g_main_ctx_ready = true;
+}
+
+/// main's symbols: the table from set_symtab(), or main's .dynsym in a -pie image.
+fw::link_context* main_ctx() noexcept {
+    if (!g_main_ctx_ready) {
+        auto r = fw::link_context::from_self();
+        if (!r) return nullptr;
+        g_main_ctx = *r;
+        g_main_ctx_ready = true;
+    }
+    return &g_main_ctx;
+}
 namespace {
 
 constexpr loader::elf::word SHF_WRITE    = 0x1;
@@ -85,6 +106,8 @@ void patch_main(const SModule& m) noexcept {
     std::size_t jmprel_sz = 0;
     std::uintptr_t symtab_addr = 0;
     std::uintptr_t strtab_addr = 0;
+
+    if (!_DYNAMIC) return;   // not -pie: main has no GOT to patch
 
     for (int i = 0; _DYNAMIC[i].d_tag != 0; ++i) {
         switch (_DYNAMIC[i].d_tag) {
@@ -136,7 +159,7 @@ int bind_host_imports(std::span<std::byte> image) noexcept {
     if (!parsed) return -1;
     auto img = *parsed;
 
-    auto linkr = fw::link_context::from_self();
+    auto linkr = xip::stat::main_ctx();
     if (!linkr) return -1;
 
     std::span<const std::byte> cimg{ image.data(), image.size() };
@@ -279,7 +302,7 @@ bool load(std::span<const std::byte> blob, SModule& out, bool patch_host_got) no
     auto dynstr = flash_sec(img, blob, ".dynstr");
     auto hashsp = flash_sec(img, blob, ".hash");
 
-    auto linkr = fw::link_context::from_self();
+    auto linkr = xip::stat::main_ctx();
     if (!linkr) { fw::image_arena().free(ram); return false; }
     main_resolver mr{ &*linkr };
     auto resolve_src = mr.source();
@@ -412,7 +435,7 @@ extern "C" std::uint64_t xip_cross_lookup(std::uint32_t got_slot_addr) noexcept 
         }
     }
     if (target == 0) {
-        auto linkr = fw::link_context::from_self();
+        auto linkr = xip::stat::main_ctx();
         if (linkr)
             if (auto v = linkr->resolve(name)) { target = *v; got = 0; }
     }
