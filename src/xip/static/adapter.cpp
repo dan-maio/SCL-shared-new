@@ -11,6 +11,7 @@
 #include "xip/static/adapter.hpp"
 #include "xip/segment-map.hpp"
 #include "xip/relocate.hpp"
+#include "../adapter-base.hpp"
 #include "loader/elf-image.hpp"
 #include "loader/sources/memory-byte-source.hpp"
 #include "loader/detail/bytes.hpp"
@@ -34,6 +35,8 @@ extern struct Dyn _DYNAMIC[] __attribute__((weak));   // only in a -pie image
 /// The shared cross-library call trampoline (r10 swap; entered from a flash PLT
 /// stub whose GOT slot was pre-linked to it by bind_host_imports()).
 extern "C" void xip_cross_call(void);
+extern "C" void dl_exidx_register(std::uint32_t, std::uint32_t, std::uint32_t, int);
+extern "C" void dl_exidx_unregister(std::uint32_t);
 
 namespace xip::stat {
 
@@ -149,7 +152,7 @@ void patch_main(const SModule& m) noexcept {
 
 }  // namespace
 
-int bind_host_imports(std::span<std::byte> image) noexcept {
+int bind_host_imports(std::span<std::byte> image, std::uintptr_t flash_base) noexcept {
     using loader::detail::load_word;
     using loader::detail::store_word;
     using loader::detail::name_at;
@@ -161,6 +164,11 @@ int bind_host_imports(std::span<std::byte> image) noexcept {
 
     auto linkr = xip::stat::main_ctx();
     if (!linkr) return -1;
+    xip::detail::set_extab_thumb_bits(image, img);
+    if (flash_base != 0) {
+        main_resolver mr{ linkr };
+        xip::detail::prelink_flash_data(image, img, flash_base, mr.source());
+    }
 
     std::span<const std::byte> cimg{ image.data(), image.size() };
     auto dynsym = flash_sec(img, cimg, ".dynsym");
@@ -337,6 +345,11 @@ bool load(std::span<const std::byte> blob, SModule& out, bool patch_host_got) no
     for (auto& slot : g_modules)
         if (!slot) { slot = &out; break; }
 
+    if (auto ex = img.find_section(".ARM.exidx"); ex && ex->sh_size) {
+        const auto ex_start = text_base + (ex->sh_addr - seg.text_vaddr);
+        dl_exidx_register(text_base, seg.text_size, ex_start, static_cast<int>(ex->sh_size / 8u));
+    }
+
     // Constructors run from flash with r10 = got_base.
     scl_cache_clean_invalidate(ram, seg.data_memsz);
     scl_cache_invalidate(blob.data(), blob.size());
@@ -375,6 +388,7 @@ void unload(SModule& m) noexcept {
     } g;
     for (auto& slot : g_modules)
         if (slot == &m) slot = nullptr;
+    dl_exidx_unregister(m.text_base);
     if (m.ram) fw::image_arena().free(m.ram);
     m = SModule{};
 }

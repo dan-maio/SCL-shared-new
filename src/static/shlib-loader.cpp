@@ -424,11 +424,19 @@ uint32_t shlib_loader::patch_shlib(symbol_table* global_syms) {
                 ++skipped; continue;
             }
             auto* addr = reinterpret_cast<uint32_t*>(&buffer[go]);
-            *addr = val;
+            *addr += val;   // S + A: e.g. a typeinfo's vptr is its vtable + 8
             log_info("  %02u ABS32  %s %s -> %s  %.*s",
                       j, log::binding_str(s.binding),
                       log::hex(uintptr_t(addr)), log::hex(*addr),
                       int(s.name.size()), s.name.data());
+            ++patched;
+            continue;
+        }
+
+        // ── R_ARM_REL32 — e.g. a catch table's typeinfo in .ARM.extab ──────
+        // A self-defined target keeps its distance in a single-bias image, so the
+        // word is already right. It must not reach the absolute-value path below.
+        if (s.type == R_ARM_REL32 && s.virtual_address) {
             ++patched;
             continue;
         }
@@ -491,9 +499,10 @@ uint32_t shlib_loader::patch_shlib(symbol_table* global_syms) {
         }
     }
 
-    // If no exports were added from .rel.dyn (e.g. simple .so without relocations),
-    // scan .dynsym directly to register exported symbols.
-    if (publish_ && global_syms && patched == 0) {
+    // An export need not appear in this module's own relocations (eh_throw, called only
+    // from another module), so always scan .dynsym. Names already published keep their
+    // first-loaded address.
+    if (publish_ && global_syms) {
         auto si = uint32_t(helper_section_idx::DYN_SYM);
         auto st = uint32_t(helper_section_idx::DYN_STR);
         auto* sym_data = m_shlib[si].address;
@@ -507,10 +516,11 @@ uint32_t shlib_loader::patch_shlib(symbol_table* global_syms) {
             if ((bind == STB_GLOBAL || bind == STB_WEAK) && sym->st_value) {
                 const char* name = reinterpret_cast<const char*>(str_data + sym->st_name);
                 uint32_t ra = sym->st_value + uintptr_t(buffer);
+                if (global_syms->has(name)) continue;
                 if (bind == STB_WEAK)
                     global_syms->add_weak(name, ra);
                 else
-                    global_syms->set_global(name, ra);
+                    global_syms->add_global(name, ra);
             }
         }
     }

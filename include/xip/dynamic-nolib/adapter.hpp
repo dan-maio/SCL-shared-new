@@ -56,6 +56,8 @@ void dlclose(void* handle) noexcept;
 /// `image` (a writable copy of the raw .so, VA==file_offset) with the address
 /// resolved from main. Call at provision time, before the image is flashed.
 /// Returns the number of slots patched, or -1 on parse failure.
-int patch_main_imports(std::span<std::byte> image) noexcept;
+/// Pass @p flash_base (where the image will be programmed) for modules that use C++
+/// exceptions: it also resolves the data segment's flash copy, which catch tables read.
+int patch_main_imports(std::span<std::byte> image, std::uintptr_t flash_base = 0) noexcept;
 
 }  // namespace xip::nolib

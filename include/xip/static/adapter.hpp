@@ -76,9 +76,12 @@ struct SModule {
  * Call this **before** the image is written to flash: afterwards those words are
  * already programmed, and NOR can only clear bits without a sector erase.
  *
+ * Pass @p flash_base (where the image will be programmed) for modules that use C++
+ * exceptions: it also resolves the data segment's flash copy, which catch tables read.
+ *
  * @return Number of slots patched, or -1 if the image could not be parsed.
  */
-int bind_host_imports(std::span<std::byte> image) noexcept;
+int bind_host_imports(std::span<std::byte> image, std::uintptr_t flash_base = 0) noexcept;
 
 /**
  * @brief Load from a flash-resident blob.

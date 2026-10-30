@@ -43,6 +43,9 @@ constexpr uint8_t  STT_FUNC  = 2;
 // R_ARM relocation types this loader implements.
 constexpr uint8_t R_ARM_THM_CALL = 10;
 constexpr uint8_t R_ARM_TARGET1  = 38;   // == ABS32 on bare-metal
+constexpr uint8_t R_ARM_NONE     = 0;    // marker only, e.g. the unwind personality
+constexpr uint8_t R_ARM_TARGET2  = 41;   // == REL32 on bare-metal (catch type tables)
+constexpr uint8_t R_ARM_PREL31   = 42;   // .ARM.exidx / .ARM.extab entries
 
 // Elf32 struct field offsets.
 constexpr uint32_t EH_TYPE = 16, EH_MACHINE = 18, EH_SHOFF = 32,
@@ -201,8 +204,16 @@ error apply_relocs(module& m, loader::symbol_source und) noexcept {
                 uint32_t A = load_word(std::span<const std::byte>(pp, 4), 0), v = S + A;
                 pp[0]=std::byte(v); pp[1]=std::byte(v>>8); pp[2]=std::byte(v>>16); pp[3]=std::byte(v>>24);
                 break; }
+            case R_ARM_TARGET2:
             case static_cast<std::uint8_t>(rel_type::REL32): {
                 uint32_t A = load_word(std::span<const std::byte>(pp, 4), 0), v = S + A - P;
+                pp[0]=std::byte(v); pp[1]=std::byte(v>>8); pp[2]=std::byte(v>>16); pp[3]=std::byte(v>>24);
+                break; }
+            case R_ARM_NONE: break;
+            case R_ARM_PREL31: {
+                uint32_t w = load_word(std::span<const std::byte>(pp, 4), 0);
+                uint32_t A = (w & 0x40000000u) ? (w | 0x80000000u) : (w & 0x7fffffffu);
+                uint32_t v = (w & 0x80000000u) | ((S + A - P) & 0x7fffffffu);
                 pp[0]=std::byte(v); pp[1]=std::byte(v>>8); pp[2]=std::byte(v>>16); pp[3]=std::byte(v>>24);
                 break; }
             case R_ARM_THM_CALL: apply_thm_call(pp, S, P); break;

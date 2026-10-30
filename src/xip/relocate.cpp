@@ -80,6 +80,16 @@ loader::result<void> apply_rel_xip(const SegmentMap& seg,
         return r.has_value() ? *r : 0u;
     };
 
+    // Words prelink_flash_data() already resolved for flash hold absolute addresses, not
+    // addends. Raw words are small (VA == file offset), so the two cannot be confused.
+    const std::uint32_t blob_base = text_base - seg.text_vaddr;
+    const std::uint32_t blob_end  = blob_base + seg.data_vaddr + seg.data_memsz;
+    auto in_blob = [&](std::uint32_t w) { return blob_base != 0 && w >= blob_base && w < blob_end; };
+    auto route = [&](std::uint32_t va) {
+        return seg.in_text(va) ? text_base + (va - seg.text_vaddr)
+                               : data_base + (va - seg.data_vaddr);
+    };
+
     const std::size_t count = reldyn.size() / sizeof(loader::elf::Rel);
     for (std::size_t i = 0; i < count; ++i) {
         const std::size_t   rb       = i * sizeof(loader::elf::Rel);
@@ -102,7 +112,8 @@ loader::result<void> apply_rel_xip(const SegmentMap& seg,
 
         switch (type) {
         case RT::RELATIVE: {                       // *P += (addend in text? text_bias : data_bias)
-            const std::uint32_t addend = load_word(ram_data, off);
+            std::uint32_t addend = load_word(ram_data, off);
+            if (in_blob(addend)) addend -= blob_base;
             const std::uint32_t bias = seg.in_text(addend) ? text_base - seg.text_vaddr
                                                            : data_base - seg.data_vaddr;
             store_word(ram_data, off, addend + bias);
@@ -112,9 +123,16 @@ loader::result<void> apply_rel_xip(const SegmentMap& seg,
         case RT::JUMP_SLOT:
             store_word(ram_data, off, sym_target(st_value, st_name));
             break;
-        case RT::ABS32:
-            store_word(ram_data, off, load_word(ram_data, off) + sym_target(st_value, st_name));
+        case RT::ABS32: {
+            const std::uint32_t w = load_word(ram_data, off);
+            if (in_blob(w))
+                store_word(ram_data, off, route(w - blob_base));    // prelinked into this image
+            else if (w >= 0x1000u)
+                ;                                                   // prelinked: main's address
+            else
+                store_word(ram_data, off, w + sym_target(st_value, st_name));
             break;
+        }
         case RT::REL32: {
             const std::uint32_t P = data_base + off;
             store_word(ram_data, off, load_word(ram_data, off) + sym_target(st_value, st_name) - P);

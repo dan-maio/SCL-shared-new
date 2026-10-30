@@ -42,7 +42,9 @@ bool get_xip_map(void* handle, xip_map& out) noexcept;
 void dlclose(void* handle) noexcept;
 
 /// Pre-resolve external calls for XIP.
-int patch_main_imports(std::span<std::byte> image) noexcept;
+/// Pass @p flash_base (where the image will be programmed) for modules that use C++
+/// exceptions: it also resolves the data segment's flash copy, which catch tables read.
+int patch_main_imports(std::span<std::byte> image, std::uintptr_t flash_base = 0) noexcept;
 
 }  // namespace xip::newlib
 

@@ -106,6 +106,7 @@ target_sources(scl-xip-static INTERFACE
     ${SCL}/src/xip/static/adapter.cpp
     ${SCL}/src/xip/xip-cross-call.c
     ${SCL}/src/port/pic-trampoline.c
+    ${SCL}/src/port/unwind-find-exidx.c
     ${SCL}/src/image-memory.cpp)
 target_include_directories(scl-xip-static INTERFACE ${SCL}/include/xip ${SCL}/include/scl)
 target_link_libraries(scl-xip-static INTERFACE scl-xip-common scl-self-resolve)

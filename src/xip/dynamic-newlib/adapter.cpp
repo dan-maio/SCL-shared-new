@@ -248,7 +248,7 @@ void* dlopen(std::span<const std::byte> so_image, const char* name) noexcept {
 
         if (auto ex = img.find_section(".ARM.exidx"); ex && ex->sh_size) {
             const std::uint32_t start = base + (ex->sh_addr - min_va);
-            dl_exidx_register(start, start + ex->sh_size, base, 0);
+            dl_exidx_register(base, total, start, static_cast<int>(ex->sh_size / 8u));
         }
 
         return h;
@@ -315,7 +315,7 @@ void* dlopen(std::span<const std::byte> so_image, const char* name) noexcept {
 
     if (auto ex = img.find_section(".ARM.exidx"); ex && ex->sh_size) {
         const auto ex_start = text_base + (ex->sh_addr - seg.text_vaddr);
-        dl_exidx_register(ex_start, ex_start + ex->sh_size, text_base, 0);
+        dl_exidx_register(text_base, seg.text_size, ex_start, static_cast<int>(ex->sh_size / 8u));
     }
 
     h->in_use     = true;
@@ -375,7 +375,8 @@ void dlclose(void* handle) noexcept {
     } g;
     auto* h = static_cast<xip_newlib_handle*>(handle);
     if (!h || !h->in_use) return;
-    if (!h->xip) dl_exidx_unregister(static_cast<std::uint32_t>(h->data_base));
+    if (h->xip) dl_exidx_unregister(h->text_base);
+    else dl_exidx_unregister(static_cast<std::uint32_t>(h->data_base));
     if (h->ram) fw::image_arena().free(h->ram);
     *h = xip_newlib_handle{};
 }
@@ -453,9 +454,10 @@ extern "C" std::uint64_t xip_cross_lookup(std::uint32_t got_slot_addr) noexcept 
     return (static_cast<std::uint64_t>(got) << 32) | static_cast<std::uint64_t>(target | 1u);
 }
 
-int patch_main_imports(std::span<std::byte> image) noexcept {
+int patch_main_imports(std::span<std::byte> image, std::uintptr_t flash_base) noexcept {
+    main_resolver mr{ &g_ctx };
     return detail::patch_main_imports_impl(image,
-        reinterpret_cast<std::uintptr_t>(&xip_cross_call));
+        reinterpret_cast<std::uintptr_t>(&xip_cross_call), flash_base, mr.source());
 }
 
 }  // namespace xip::newlib
