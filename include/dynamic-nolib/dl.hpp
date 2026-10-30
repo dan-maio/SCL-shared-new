@@ -73,11 +73,13 @@ void dl_dump_got_walkthrough(const handle& h) noexcept;
 
 /// Install a boot-time table for main's exports (sidecar ELF or registered
 /// section). Call before dlopen; the table must outlive the loaded libraries.
-/// This is the non-PIE replacement for link_context::from_self().
+/// This is the non-PIE replacement for link_context::from_self(): once a table
+/// is installed, main's .dynsym is no longer searched.
 void dl_set_symtab(const scl_sym_entry* entries, std::size_t count) noexcept;
 
 /// Enable/disable lazy re-arming of .rel.dyn JUMP_SLOTs. Lazy is the default.
 /// Disable it for RTOS/multi-core use so no loader code runs on the first call.
+/// dl_enable_cross_call(true) still resolves external slots at call time.
 void dl_set_lazy_binding(bool on) noexcept;
 bool dl_lazy_binding() noexcept;
 

@@ -28,7 +28,7 @@ bool read_name(loader::byte_source& src, std::uint32_t off, std::uint32_t limit,
     if (off >= limit || cap < 2) return false;
     const std::size_t max = limit - off;
     std::size_t i = 0;
-    for (; i < max && i < kMaxNameLen; ++i) {
+    for (; i < max && i <= kMaxNameLen; ++i) {
         char c = 0;
         auto r = src.read_at(off + i,
                     {reinterpret_cast<std::byte*>(&c), sizeof(c)});

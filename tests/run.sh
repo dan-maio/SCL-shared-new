@@ -4,7 +4,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 OUT="${OUT:-/tmp/scl-new-tests}"
-ELF="${ELF:-$ROOT/common-elf-reader/test/411ce-100Mhz.elf}"
+ELF="${ELF:-$HERE/fixtures/411ce-100Mhz.elf}"
 mkdir -p "$OUT"
 
 INC=(-I"$ROOT/include" -I"$ROOT/include/scl" -I"$ROOT/common-elf-reader/include")

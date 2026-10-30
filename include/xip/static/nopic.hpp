@@ -21,12 +21,13 @@
  *
  * Cross-module imports are resolved at load against the registry of already
  * loaded modules (load dependencies first), then main's own `.dynsym`
- * (`fw::link_context::from_self()`).
+ * (`fw::link_context::from_self()`, or the source given to set_main_symbols()).
  */
 #pragma once
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include "loader/reloc-applier.hpp"   // symbol_source
 #include "loader/symbol-resolver.hpp"
 
 namespace xip::nopic {
@@ -46,6 +47,16 @@ struct PModule {
     std::span<const std::byte> dynstr{};
     loader::symbol_resolver resolver{ {}, {}, {} };   ///< over the blob's dynsym
 };
+
+/**
+ * @brief Resolve main's symbols through @p source instead of from_self().
+ *
+ * Call before load(), for example with scl::symtab::source(view) or
+ * scl::symtab::source_registered(). The source and anything it refers to must
+ * stay valid while modules can resolve imports. Main's .dynsym is then not
+ * searched.
+ */
+void set_main_symbols(loader::symbol_source source) noexcept;
 
 /**
  * @brief Load a `-fno-pic -mlong-calls` fixed-address module from a blob.

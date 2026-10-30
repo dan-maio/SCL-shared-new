@@ -12,9 +12,10 @@ __attribute__((weak)) void scl_cache_invalidate(const void* addr, size_t len) {
     scl_memory_barrier();
 }
 
+/* Calls the two hooks above, so overriding them is enough on a cached core. */
 __attribute__((weak)) void scl_cache_clean_invalidate(const void* addr, size_t len) {
-    (void)addr; (void)len;
-    scl_memory_barrier();
+    scl_cache_clean(addr, len);
+    scl_cache_invalidate(addr, len);
 }
 
 __attribute__((weak)) void scl_publish_release(void) {

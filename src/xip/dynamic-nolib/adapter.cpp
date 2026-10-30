@@ -192,6 +192,8 @@ void* dlopen(std::span<const std::byte> so_image, const char* name) noexcept {
         h->ram         = ram;
         std::strncpy(h->name, name, sizeof(h->name) - 1);
 
+        scl_cache_clean_invalidate(ram, total);
+
         if (auto sh = img.find_section(".init_array"); sh && sh->sh_size >= 4) {
             const std::size_t off = sh->sh_addr - min_va;
             for (std::size_t o = 0; o + 4 <= sh->sh_size; o += 4) {
@@ -294,7 +296,8 @@ void* dlopen(std::span<const std::byte> so_image, const char* name) noexcept {
     h->ram        = ram;
     std::strncpy(h->name, name, sizeof(h->name) - 1);
 
-    scl_cache_clean_invalidate(so_image.data(), so_image.size());
+    scl_cache_clean_invalidate(ram, seg.data_memsz);
+    scl_cache_invalidate(so_image.data(), so_image.size());
 
     if (auto sh = img.find_section(".init_array"); sh && sh->sh_size >= 4) {
         const std::size_t off = sh->sh_addr - seg.data_vaddr;
@@ -339,6 +342,10 @@ void dlclose(void* handle) noexcept {
 
 // ---- cross-call resolution ----
 extern "C" std::uint64_t xip_cross_lookup(std::uint32_t got_slot_addr) noexcept {
+    struct guard {
+        guard() noexcept  { scl_loader_lock(); }
+        ~guard() noexcept { scl_loader_unlock(); }
+    } g;
     using loader::detail::load_word;
     using loader::detail::name_at;
     using loader::detail::for_each_rel;

@@ -1,7 +1,7 @@
 # SCL — Shared-Code Loader for Cortex-M (ARM32), as INTERFACE source libraries.
 #
-# This repo is ONLY the loader sources + common-elf-reader (submodule). No tests,
-# no platform, no firmware. Every target is an INTERFACE "source-code library":
+# This repo is the loader sources + a vendored common-elf-reader + host tests of
+# the new APIs. No platform, no firmware. Every target is an INTERFACE "source-code library":
 # its .cpp compile into the CONSUMER's firmware with the consumer's own flags —
 # there are no .a archives.
 #
@@ -14,7 +14,7 @@
 #   optimal (XIP)    scl::optimal        -fno-pic fixed windows  flash-window    free
 #   dynamic (nolib)  scl::dynamic-nolib  -fPIC .so, dlopen       RAM (buffer)    used
 #   dynamic (newlib) scl::dynamic-newlib -fPIC .so, POSIX dlopen  RAM (buffer)   used
-#   overlay          scl::overlay        (app's own modules)     flash overlay   free
+#   overlay          scl::overlay        (app's own modules)     SRAM window     free
 #     (dynamic-newlib needs -DSCL_HOSTED=ON; XIP variants: scl::xip-dynamic-{nolib,newlib})
 #
 # Consume it:
@@ -27,9 +27,9 @@ project(scl LANGUAGES C CXX)
 
 set(SCL ${CMAKE_CURRENT_SOURCE_DIR})
 
-# ---- common-elf-reader (git submodule): common-elf-reader::elf-reader ---------
+# ---- common-elf-reader (vendored): common-elf-reader::elf-reader --------------
 if(NOT EXISTS "${SCL}/common-elf-reader/CMakeLists.txt")
-    message(FATAL_ERROR "common-elf-reader submodule missing — run: git submodule update --init")
+    message(FATAL_ERROR "common-elf-reader missing from this checkout")
 endif()
 add_subdirectory(common-elf-reader EXCLUDE_FROM_ALL)
 
@@ -82,6 +82,7 @@ target_sources(scl-static INTERFACE
     ${SCL}/src/static/logger.cpp
     ${SCL}/src/static/module.cpp
     ${SCL}/src/static/tls.c
+    ${SCL}/src/symtab-runtime.cpp
     ${SCL}/src/port/os-hooks.c
     ${SCL}/src/port/cache.c)
 target_include_directories(scl-static INTERFACE ${SCL}/include ${SCL}/include/static)

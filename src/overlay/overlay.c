@@ -6,6 +6,7 @@
 #include "scl/log.h"
 #include "scl/barrier.h"
 #include "scl/os-hooks.h"
+#include "scl/cache.h"
 #include <string.h>
 
 void scl_overlay_init(scl_overlay_region* r,
@@ -17,11 +18,15 @@ void scl_overlay_init(scl_overlay_region* r,
 
 int scl_overlay_load(scl_overlay_region* r, int index) {
     if (index < 0 || index >= r->count) return -1;
-    if (index == r->resident) return 0;
 
     const scl_overlay_module* m = &r->modules[index];
     scl_loader_lock();
+    if (index == r->resident) {
+        scl_loader_unlock();
+        return 0;
+    }
     memcpy(m->vma, m->lma, m->size);
+    scl_cache_clean_invalidate(m->vma, m->size);
     scl_memory_barrier();
     r->resident = index;
     scl_loader_unlock();

@@ -33,8 +33,8 @@ std::array<handle, 4> g_handles{};   ///< Fixed pool of loadable-library handles
 bool g_cross_call  = false;
 int  g_cross_trace = 1;               ///< GOT/PLT translation trace level (0=off,1=hops,2=verbose).
 
-/// RTOS/multi-core: lazy re-arming is off by default in production. Disable it
-/// so the first call into a module never enters loader code.
+/// Lazy re-arming of .rel.dyn JUMP_SLOTs (on by default). RTOS/multi-core code
+/// disables it so the first call into a module does not enter loader code.
 bool g_lazy_binding = true;
 
 /// Boot-time main table, or empty. Replaces from_self() for non-PIE firmware.
@@ -485,6 +485,7 @@ void log_fixup_miss(const handle* h, std::uint32_t slot_addr, const char* why) n
 }
 
 extern "C" void* dl_fixup(std::uint32_t* slot) noexcept {
+    loader_guard guard;
     const std::uint32_t a = reinterpret_cast<std::uint32_t>(slot);
     handle* h = nullptr;
     for (auto& hh : g_handles)
@@ -530,6 +531,7 @@ extern "C" void* dl_fixup(std::uint32_t* slot) noexcept {
  * @return The packed {target,got} pair, or 0 if the slot is unknown.
  */
 extern "C" std::uint64_t dl_cross_lookup(std::uint32_t got_slot_addr) noexcept {
+    loader_guard guard;
     using loader::detail::load_word;
     using loader::detail::name_at;
 

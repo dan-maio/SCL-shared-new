@@ -18,7 +18,8 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 | Eager binding switch (no first-call loader code) | **Implemented** | `fw::dl_set_lazy_binding(false)` |
 | `scl_sym_entry` overload for XIP newlib | **Implemented** | `xip::newlib::set_symtab(const scl_sym_entry*, ...)` |
 | Boot table for `scl::static` | **Implemented** | `symbol_table::add_entries()` |
-| Central RTOS lock hooks for every loader | **Implemented** | `include/scl/os-hooks.h`, `src/port/os-hooks.c`; call sites in nolib/static/XIP/reloc/optimal/overlay |
+| Central RTOS lock hooks for every loader | **Implemented** | `include/scl/os-hooks.h`, `src/port/os-hooks.c`; call sites in nolib/newlib/static/XIP/reloc/optimal/overlay |
+| External main table for `scl::optimal` | **Implemented** | `xip::nopic::set_main_symbols()` |
 | Cache clean/invalidate hooks | **Implemented (weak defaults)** | `include/scl/cache.h`, `src/port/cache.c` |
 | Release/publication helper | **Implemented** | `scl_publish_release()` |
 | Eager binding documented for RTOS use | **Implemented** | `docs/RTOS-MULTICORE.md` |
@@ -41,16 +42,21 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 - `symbol_resolver` gained an empty default constructor; `fw::link_context`
   gained a default constructor, `set_symtab()`, and table-first resolution.
 - `dynamic-nolib` gained an external main table, eager-binding control, lock
-  guards, and cache maintenance before constructors.
-- `static` gained `symbol_table::add_entries()` and cache maintenance before
+  guards (including its call-time resolvers), and cache maintenance before
   constructors.
-- XIP adapters gained lock guards, cache maintenance, and (newlib) a
-  `scl_sym_entry` overload.
-- `reloc`, `optimal` and `overlay` gained lock guards; reloc also cleans the
-  arena before constructors.
+- RAM `dynamic-newlib` gained lock guards and cache maintenance before
+  constructors.
+- `static` gained `symbol_table::add_entries()`, `symtab-runtime.cpp`, and cache
+  maintenance before constructors.
+- XIP adapters gained lock guards, cache maintenance of RAM data and flash image,
+  and (newlib) a `scl_sym_entry` overload.
+- `reloc`, `optimal` and `overlay` gained lock guards and cache maintenance.
+  `optimal` (through `xip::nopic`) also gained `set_main_symbols()`.
 - Weak lock hooks moved from `static/module.cpp` to `src/port/os-hooks.c` so all
   loaders share them.
 - `scl-common` now also builds `symtab-runtime`, `os-hooks` and `cache`.
+- The unused `cmake/embed-symtab.cmake` was removed; `scl_embed_symtab()` is
+  defined by the platform code in the test suites.
 
 ## Verifying
 
@@ -60,7 +66,7 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 
 Expected: `RESULT: SUCCESS` and `all host tests: PASS`.
 
-The tests parse `common-elf-reader/test/411ce-100Mhz.elf`, build/validate an
+The tests parse `tests/fixtures/411ce-100Mhz.elf`, build/validate an
 SCLS blob, exercise the zero-allocation collect path, check the
 `loader::symbol_source` adapter, and verify `SCL_REGISTER_SYM` registration.
 `linkctx_test` verifies that `fw::link_context` prefers an externally supplied
@@ -78,8 +84,8 @@ The retained host tools were also built and smoke-tested:
 ```sh
 cmake --build <build> --target gen-symtab-host
 cmake --build <build> --target elf2json
-<build>/tools/elf2json common-elf-reader/test/411ce-100Mhz.elf /tmp/test.json
+<build>/tools/elf2json tests/fixtures/411ce-100Mhz.elf /tmp/test.json
 ```
 
 A full firmware link/run requires an application and board (or the test suites in
-`SCL-TESTS-shared`), which are outside this repository.
+`SCL-TESTS-shared-new`), which are outside this repository.

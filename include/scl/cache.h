@@ -6,6 +6,10 @@
  * strong implementations with CMSIS SCB_CleanDCache_by_Addr() /
  * SCB_InvalidateICache_by_Addr(), or mark the loaded windows non-cacheable in
  * the MPU. On Cortex-M4 the defaults are correct (no data cache).
+ *
+ * scl_cache_clean() writes data back to memory; scl_cache_invalidate() discards
+ * stale instructions. The default scl_cache_clean_invalidate() calls both, so
+ * those two are the only hooks a port has to override.
  */
 #ifndef SCL_CACHE_H
 #define SCL_CACHE_H

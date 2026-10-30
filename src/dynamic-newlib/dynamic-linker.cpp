@@ -12,6 +12,8 @@
 #include "loader/relocator.hpp"
 #include "loader/symbol-resolver.hpp"
 #include "scl/log.h"
+#include "scl/os-hooks.h"
+#include "scl/cache.h"
 #include <cstring>
 #include <cstdio>
 #include <new>
@@ -19,12 +21,20 @@
 
 namespace firmware {
 
+namespace {
+struct loader_guard {
+    loader_guard() noexcept  { scl_loader_lock(); }
+    ~loader_guard() noexcept { scl_loader_unlock(); }
+};
+} // namespace
+
 dynamic_linker::dynamic_linker(const link_context& ctx) noexcept
     : ctx_(ctx) {}
 
 /** @brief Parse, load, relocate, and construct from a byte_source. */
 loader::result<library*>
 dynamic_linker::load_from_source(loader::byte_source& src) noexcept {
+    loader_guard guard;
     if (libs_.size() >= 8)
         return loader::unexpected(loader::error::OUT_OF_MEMORY);
 
@@ -128,6 +138,7 @@ dynamic_linker::load_from_source(loader::byte_source& src) noexcept {
 
 /** @brief Revert journal, prune pending relocs, free memory, remove from library list. */
 void dynamic_linker::unload(library* lib) noexcept {
+    loader_guard guard;
     if (!lib || !lib->image.is_loaded()) return;
 
     lib->journal.revert();
@@ -154,6 +165,7 @@ void dynamic_linker::unload(library* lib) noexcept {
  *    4. symtab from firmware ELF */
 loader::result<void*>
 dynamic_linker::lookup(library* lib, const char* name) noexcept {
+    loader_guard guard;
     if (!lib || !lib->image.is_loaded())
         return loader::unexpected(loader::error::SYMBOL_NOT_FOUND);
 
@@ -399,6 +411,8 @@ dynamic_linker::patch_main_got(library* lib) noexcept {
 /** @brief Iterate .init_array and call each non-null constructor function. */
 loader::result<void>
 dynamic_linker::run_constructors(library* lib) noexcept {
+    /* Make the copied/relocated code visible on cached cores before executing it. */
+    scl_cache_clean_invalidate(lib->image.base(), lib->image.size());
     if (!lib->init_array || lib->init_count == 0) return {};
     using Ctor = void(*)();
     auto* ctors = static_cast<Ctor*>(lib->init_array);

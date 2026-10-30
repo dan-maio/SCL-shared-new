@@ -28,7 +28,8 @@ public:
     /** @brief A resolver callback: extern name -> absolute address in main. */
     [[nodiscard]] loader::symbol_source source() const noexcept;
 
-    /** @brief Resolve @p name against the external table, then .dynsym. */
+    /** @brief Resolve @p name against the external table, then .dynsym. A context
+     *         not built by from_self() has only the table. */
     [[nodiscard]] loader::result<std::uint32_t> resolve(std::string_view name) const noexcept;
 
 private:

@@ -15,6 +15,8 @@
 #include "loader/detail/bytes.hpp"
 #include "scl/link-context.hpp"
 #include "scl/log.h"
+#include "scl/os-hooks.h"
+#include "scl/cache.h"
 #include <cstring>
 #include <string_view>
 
@@ -45,6 +47,14 @@ constexpr loader::elf::word PF_W = 0x2;
 constexpr int kMaxModules = 16;
 PModule* g_modules[kMaxModules] = {};
 
+/// Boot-time source for main's symbols, or empty to use from_self().
+loader::symbol_source g_main_symbols{};
+
+struct loader_guard {
+    loader_guard() noexcept  { scl_loader_lock(); }
+    ~loader_guard() noexcept { scl_loader_unlock(); }
+};
+
 /// A section's bytes as they sit in the blob.
 std::span<const std::byte> sec(const loader::elf_image& img,
                                std::span<const std::byte> blob,
@@ -57,11 +67,22 @@ std::span<const std::byte> sec(const loader::elf_image& img,
 
 }  // namespace
 
+void set_main_symbols(loader::symbol_source source) noexcept {
+    loader_guard guard;
+    g_main_symbols = source;
+}
+
 void* resolve_any(const char* name) noexcept {
+    loader_guard guard;
     for (auto* m : g_modules) {
         if (!m || !m->ok) continue;
         auto v = m->resolver.address_of(name);
         if (v && *v != 0) return reinterpret_cast<void*>(*v);
+    }
+    if (g_main_symbols.fn) {
+        if (auto v = g_main_symbols(name))
+            if (*v != 0) return reinterpret_cast<void*>(*v);
+        return nullptr;
     }
     auto linkr = fw::link_context::from_self();
     if (linkr)
@@ -71,6 +92,7 @@ void* resolve_any(const char* name) noexcept {
 }
 
 bool load(std::span<const std::byte> blob, PModule& out) noexcept {
+    loader_guard guard;
     using loader::detail::load_word;
     using loader::detail::store_word;
     using loader::detail::for_each_rel;
@@ -210,6 +232,9 @@ bool load(std::span<const std::byte> blob, PModule& out) noexcept {
     for (auto& slot : g_modules)
         if (!slot) { slot = &out; break; }
 
+    scl_cache_clean_invalidate(reinterpret_cast<const void*>(text_vaddr), text_memsz);
+    scl_cache_clean_invalidate(reinterpret_cast<const void*>(data_vaddr), data_memsz);
+
     // Constructors: .init_array lives in the data window; each entry is an
     // absolute function address (Thumb bit set) already copied into RAM.
     if (auto sh = img.find_section(".init_array");
@@ -241,6 +266,7 @@ void* resolve(const PModule& m, const char* name) noexcept {
 }
 
 void resolve_all() noexcept {
+    loader_guard guard;
     using loader::detail::load_word;
     using loader::detail::store_word;
     using loader::detail::for_each_rel;
@@ -279,10 +305,13 @@ void resolve_all() noexcept {
                 store_word(std::span<std::byte>{ target, 4 }, 0,
                            reinterpret_cast<std::uint32_t>(resolved));
         });
+        scl_cache_clean_invalidate(text, text_memsz);
+        scl_cache_clean_invalidate(data, data_memsz);
     }
 }
 
 void patch_main(const PModule& m) noexcept {
+    loader_guard guard;
     if (!m.ok) return;
 
     struct Rel { std::uint32_t r_offset; std::uint32_t r_info; };
@@ -314,12 +343,15 @@ void patch_main(const PModule& m) noexcept {
         const std::uint32_t st_name = syms[sym].st_name;
         if (st_name >= strtab_sz) continue;
         auto v = m.resolver.address_of(strtab + st_name);
-        if (v && *v != 0)
+        if (v && *v != 0) {
             *reinterpret_cast<std::uint32_t*>(rels[i].r_offset) = *v;
+            scl_cache_clean(reinterpret_cast<const void*>(rels[i].r_offset), sizeof(std::uint32_t));
+        }
     }
 }
 
 void unload(PModule& m) noexcept {
+    loader_guard guard;
     for (auto& slot : g_modules)
         if (slot == &m) slot = nullptr;
     m = PModule{};

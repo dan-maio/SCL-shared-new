@@ -16,8 +16,11 @@ RTOS and multi-core proposals analysed in `SCL-projects-analysis.md`.
   the non-PIE `from_self()` requirement.
 - **Eager binding switch**: `fw::dl_set_lazy_binding(false)` keeps loader code
   out of the first call path.
-- **RTOS/multi-core hooks**: shared `scl_loader_lock/unlock`, cache
-  clean/invalidate hooks, `scl_publish_release()`, lock guards on every loader.
+- **External main table for `scl::optimal`**:
+  `xip::nopic::set_main_symbols()`.
+- **RTOS/multi-core hooks**: shared `scl_loader_lock/unlock` (must be recursive),
+  cache clean/invalidate hooks, `scl_publish_release()`, lock guards and cache
+  maintenance on every loader.
 - **Static table helper**: `symbol_table::add_entries()`.
 - **Host tests** for the new APIs: `./tests/run.sh`.
 
@@ -43,11 +46,14 @@ repository is self-contained.
 Everything is an INTERFACE "source-code library": the loader `.cpp` compile into
 *your* firmware with *your* flags; there are no `.a` archives.
 
+`scl::dynamic-newlib` needs `-DSCL_HOSTED=ON`.
+
 Supporting targets: `scl::common` (parser/resolver/relocation core plus the new
 symtab/cache/OS-hook sources), `scl::xip-common` (XIP primitives),
-`scl::loader-nopic` (the no-pic loader under `scl::optimal`), and
-`scl::self-resolve` (resolve a module's imports against main's own `.dynsym` via
-`link_context::from_self()`).
+`scl::loader-nopic` (the no-pic loader under `scl::optimal`),
+`scl::xip-dynamic-nolib` and `scl::xip-dynamic-newlib` (XIP adapters for the
+dynamic loaders), and `scl::self-resolve` (resolve a module's imports against
+main's own `.dynsym` via `link_context::from_self()`).
 
 ## Use it
 
@@ -88,6 +94,7 @@ Firmware sources are cross-compiled with the ARM toolchain (the xPack
 
 ## Further documentation
 
-The loader-model guides and worked WeAct examples live in the sibling repos:
-`SCL-TESTS-shared` (`docs/LOADER-CHOICE.md`, `docs/import_in_project_full.md`,
-`docs/resolving-module-imports.md`) and `SCL-EXAMPLES-shared`.
+The loader-model guides and test benches live in the sibling repo
+`SCL-TESTS-shared-new` (`docs/LOADER-CHOICE.md`, `docs/import_in_project_full.md`,
+`docs/resolving-module-imports.md`). Worked WeAct examples are in
+`SCL-EXAMPLES-shared`, which still uses the original `SCL-shared`.

@@ -315,6 +315,7 @@ bool load(std::span<const std::byte> blob, SModule& out, bool patch_host_got) no
         if (!slot) { slot = &out; break; }
 
     // Constructors run from flash with r10 = got_base.
+    scl_cache_clean_invalidate(ram, seg.data_memsz);
     scl_cache_invalidate(blob.data(), blob.size());
     if (auto sh = img.find_section(".init_array"); sh && sh->sh_size >= 4) {
         const std::size_t off = sh->sh_addr - seg.data_vaddr;
@@ -364,6 +365,10 @@ void unload(SModule& m) noexcept {
 // among the loaded modules (falling back to main). Returns {callee_got, target}
 // packed in a u64; the trampoline swaps r10 and blx's the target.
 extern "C" std::uint64_t xip_cross_lookup(std::uint32_t got_slot_addr) noexcept {
+    struct guard {
+        guard() noexcept  { scl_loader_lock(); }
+        ~guard() noexcept { scl_loader_unlock(); }
+    } g;
     using loader::detail::load_word;
     using loader::detail::name_at;
     using loader::detail::for_each_rel;

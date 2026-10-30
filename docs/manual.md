@@ -1,7 +1,9 @@
 # SCL-shared & common-elf-reader — API Manual
 
-**Version:** documents the current `SCL-shared` tree (loader sources only) and its
-`common-elf-reader` git submodule.
+**Version:** documents the current `SCL-shared-new` tree: the loader sources plus a
+vendored copy of `common-elf-reader`. Examples still say `SCL-shared` where the
+text applies to both trees. The APIs added by this fork are summarised in
+[§6.8](#68-apis-added-by-scl-shared-new).
 
 **Audience:** embedded developers who want to *use* the loaders, and maintainers
 who want to understand the *internal* API. Every section is written twice: a
@@ -39,13 +41,13 @@ It targets **ARM Cortex-M, ELF32 little-endian, hard-float** (`-mfloat-abi=hard
 -mfpu=fpv4-sp-d16`).
 
 **common-elf-reader** is a small, standalone **ARM ELF32 little-endian parser** that
-SCL-shared uses (as a git submodule) so that *all* loader cases parse ELF objects
+SCL-shared-new vendors (a plain copy, not a submodule) so that *all* loader cases parse ELF objects
 through **one API**. It is deliberately only a reader/parser: relocation application,
 symbol resolution and GOT patching stay in each consuming loader.
 
 ```
 SCL-shared
-├── common-elf-reader/          git submodule — the ELF32 parser (one API for all loaders)
+├── common-elf-reader/          vendored — the ELF32 parser (one API for all loaders)
 ├── include/                    public headers (loader/, scl/, static/, reloc/,
 │                               dynamic-*, xip/, optimal/, overlay/)
 ├── src/                        the loader implementations (compile into your firmware)
@@ -749,14 +751,29 @@ void dl_exidx_unregister(uint32_t img_base);
 `src/port/unwind-find-exidx.c`; PCs outside any registered library fall back to main's
 own `__exidx_start`/`__exidx_end`.
 
-### 6.7 `scl/` reentrancy hooks (used by `scl::static`)
+### 6.7 `scl/` reentrancy hooks (used by every loader)
 
 ```cpp
-// Weak no-ops by default. An RTOS application defines strong versions to serialise
-// load/unload against calls from other tasks.
+// Weak no-ops by default. An RTOS application defines strong versions, backed by a
+// recursive mutex, to serialise load/unload against calls from other tasks.
 void scl_loader_lock();
 void scl_loader_unlock();
 ```
+
+See `RTOS-MULTICORE.md` for what the lock covers.
+
+### 6.8 APIs added by SCL-shared-new
+
+| API | Purpose | Guide |
+|---|---|---|
+| `scl::symtab::collect()`, `collect_buffered()`, `build_blob()`, `view`, `source()` | Build and read a symbol table at boot | `BOOT-SYMTAB.md` |
+| `SCL_REGISTER_SYM()`, `scl::symtab::registered()`, `source_registered()` | Compile-time table | `BOOT-SYMTAB.md` |
+| `fw::dl_set_symtab()`, `link_context::set_symtab()` | External main table for `dynamic-nolib` / `fw::link_context` | `BOOT-SYMTAB.md` |
+| `xip::newlib::set_symtab(const scl_sym_entry*, ...)` | Same, for XIP newlib | `BOOT-SYMTAB.md` |
+| `xip::nopic::set_main_symbols()` | External main symbols for `scl::optimal` | `BOOT-SYMTAB.md` |
+| `symbol_table::add_entries()` | Publish a table to `scl::static` | `BOOT-SYMTAB.md` |
+| `fw::dl_set_lazy_binding()`, `fw::dl_lazy_binding()` | Eager/lazy binding switch | `RTOS-MULTICORE.md` |
+| `scl_cache_clean()`, `scl_cache_invalidate()`, `scl_cache_clean_invalidate()`, `scl_publish_release()` | Weak cache and publication hooks | `RTOS-MULTICORE.md` |
 
 ---
 
@@ -1881,12 +1898,10 @@ add_subdirectory(SCL-shared scl)          # or path/to/SCL-shared
 target_link_libraries(my_fw PRIVATE scl::optimal)   # pick ONE case loader
 ```
 
-The `common-elf-reader` submodule is included automatically; make sure it is checked out:
+`common-elf-reader` is vendored in this repository, so a plain clone is enough:
 
 ```sh
-git clone --recursive <url>/SCL-shared.git
-# or, if already cloned:
-git submodule update --init
+git clone <url>/SCL-shared-new.git
 ```
 
 ### 10.2 The generic `scl::loader` alias

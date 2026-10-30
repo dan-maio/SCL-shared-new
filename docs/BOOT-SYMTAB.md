@@ -17,8 +17,8 @@ step.
 
 ```cpp
 #include "scl/symtab-runtime.hpp"
-#include "scl/image-memory.hpp"
-#include "scl/link-context.hpp"
+#include "loader/sources/memory-byte-source.hpp"
+#include "dynamic-nolib/dl.hpp"                  // for fw::dl_set_symtab
 
 extern "C" const std::byte _scl_sidecar_start[], _scl_sidecar_end[];
 
@@ -40,6 +40,10 @@ void load_main_symbols() {
     // or: symbol_table.add_entries(entries, n);   // scl::static
 }
 ```
+
+`fw::dl_set_symtab()` replaces `from_self()`: once a table is installed, main's
+`.dynsym` is no longer searched, so the table must hold every symbol the modules
+import from main.
 
 The entries are layout-compatible with `firmware::sym_entry`; for a RAM
 `dynamic-newlib` platform that owns its own `link_context`:
@@ -125,8 +129,15 @@ Requirements and caveats:
   standalone product use a sidecar, registration, or PIE `.dynsym`.
 - `link_context::resolve()` is a linear scan; fine for load-time imports, not
   for per-call `dlsym`.
+- The buffer sizes above total 112 KB, which is too much on a 128 KB part. Size
+  them from `arm-none-eabi-readelf -S firmware.elf`: `symbuf` must hold
+  `.symtab`, `strbuf` must hold `.strtab`, and `strbuf` stays allocated while the
+  table is in use. If the table must persist, consider `collect()` with a smaller
+  name arena instead.
 
-## 2. Compile-time registration (no ELF, no parser)Annotate the exports you need:
+## 2. Compile-time registration (no ELF, no parser)
+
+Annotate the exports you need:
 
 ```c
 #include "scl/symtab-register.h"
@@ -162,7 +173,13 @@ magic 'SCLS' | u32 count | { u32 name_ptr, u32 addr }[count] | names
   valid absolute pointer. Pass `0` to store blob-relative offsets (host tests,
   relocatable copies).
 - `scl::symtab::view` validates and looks up names; `scl::symtab::source(view)`
-  adapts it to a `loader::symbol_source` for `scl::reloc`/`scl::optimal`.
+  adapts it to a `loader::symbol_source`. The source keeps a pointer to the view,
+  so the view must outlive it.
+- `scl::reloc` takes the source as a `load()` argument. `scl::optimal` takes it
+  through `xip::nopic::set_main_symbols()`, called before loading; main's
+  `.dynsym` is then not searched.
+- A `gen-symtab` blob holds absolute name pointers, so read it on the target with
+  `view(blob, size, blob_addr)`.
 - On a cached core, clean the D-cache after writing the blob and invalidate the
   I-cache before executing from it (`scl_cache_*`, below).
 
@@ -174,7 +191,8 @@ magic 'SCLS' | u32 count | { u32 name_ptr, u32 addr }[count] | names
 | Debugger attached during development | Semihosting read of the firmware ELF + `collect_buffered()` |
 | A small, fixed export surface | `SCL_REGISTER_SYM` + `registered()` |
 | A platform already consumes the binary blob | `gen-symtab` (retained) or `build_blob()` |
-| `scl::reloc` / `scl::optimal` resolver | Build a `view` and pass `scl::symtab::source(view)` |
+| `scl::reloc` | Build a `view` and pass `scl::symtab::source(view)` to `load()` |
+| `scl::optimal` | Build a `view` and call `xip::nopic::set_main_symbols(scl::symtab::source(view))` before loading |
 | `scl::static` | `symbol_table::add_entries(entries, n)` |
 | You can relink as `-pie` | Prefer `.dynsym` + a resolver; no table needed |
 | Inspect an ELF in the AetherELF GUI | `common-elf-reader/tools/elf2json.cpp` |

@@ -18,10 +18,14 @@ void scl_loader_unlock(void);
 Covered entry points:
 
 - `scl::static` — `Module::load_*`, `Module::unload`
-- `scl::dynamic-nolib` — `dlopen_source`, `dlsym`, `dlclose`
-- XIP adapters (`xip::static`, `xip::nolib`, `xip::newlib`) — load/unload
+- `scl::dynamic-nolib` — `dlopen_source`, `dlsym`, `dlclose`, and the call-time
+  resolvers `dl_fixup` and `dl_cross_lookup`
+- `scl::dynamic-newlib` — `load_from_source`, `lookup`, `unload`
+- XIP adapters (`xip::static`, `xip::nolib`, `xip::newlib`) — load/unload and
+  `xip_cross_lookup`
 - `scl::reloc` — `load`, `load_set`
-- `scl::optimal` — `load_and_link`
+- `scl::optimal` — `load_and_link`, and in `xip::nopic`: `load`, `resolve_any`,
+  `resolve_all`, `patch_main`, `unload`
 - `scl::overlay` — `scl_overlay_load` (see the warning below)
 
 FreeRTOS example:
@@ -37,12 +41,17 @@ void scl_loader_lock(void)   { xSemaphoreTakeRecursive(g_scl_lock, portMAX_DELAY
 void scl_loader_unlock(void) { xSemaphoreGiveRecursive(g_scl_lock); }
 ```
 
-Use a **recursive** mutex: dependency loading (`Module::dep_loader`) can re-enter
-the loader, and constructors may call back into it. On SMP add a hardware
-spinlock (or a mutex that disables interrupts and takes the cross-core lock)
-under the RTOS mutex.
+The mutex **must be recursive**: `optimal::load_and_link()` calls
+`xip::nopic::load()`, dependency loading (`Module::dep_loader`) can re-enter the
+loader, and constructors may call back into it. On SMP add a hardware spinlock
+(or a mutex that disables interrupts and takes the cross-core lock) under the
+RTOS mutex.
 
-These hooks serialize *load/unload*. They are **not held while module code runs**.
+These hooks serialize *load/unload*. They **are held while constructors and
+destructors run**, so a constructor must not wait on a task that needs the
+loader. They are not held during normal calls into a loaded module, with one
+exception: a lazy or cross-call slot takes the lock while it resolves. Never
+reach such a slot from an ISR, because the RTOS mutex cannot be taken there.
 
 ## 2. Bind eagerly
 
@@ -54,8 +63,13 @@ fw::dl_set_lazy_binding(false);
 fw::dl_set_symtab(main_symtab, main_symtab_count);  // non-PIE main
 ```
 
-With lazy binding off, every slot is bound at load and a resolved call never
-enters loader code. `.rel.plt` slots are eager in either mode.
+With lazy binding off, every slot is bound at load and a resolved call does not
+enter loader code. `.rel.plt` slots are eager in either mode.
+
+`fw::dl_enable_cross_call(true)` is the exception: it routes external slots to
+`dl_cross_call`, which resolves the target on every call. Leave it off in code
+that must stay out of the loader. The XIP adapters use a similar trampoline for
+calls between modules (`xip_cross_lookup`).
 
 ## 3. Cache maintenance and publication
 
@@ -68,10 +82,18 @@ void scl_cache_clean_invalidate(const void* addr, size_t len);
 void scl_publish_release(void);   // DMB + SEV
 ```
 
-Defaults are barriers only. The loaders already call
-`scl_cache_clean_invalidate()` after copying/relocating a RAM image (static,
-reloc, nolib) and `scl_cache_invalidate()` before XIP constructors. On a cached
-core (Cortex-M7) override them with CMSIS:
+Defaults are barriers only, and the default `scl_cache_clean_invalidate()` calls
+the other two hooks. Every loader calls these hooks before running constructors:
+
+| Loader | Hook call |
+|---|---|
+| `static`, `reloc`, `dynamic-nolib`, `dynamic-newlib` | `scl_cache_clean_invalidate()` on the RAM image |
+| `xip::static`, `xip::nolib`, `xip::newlib` | `scl_cache_clean_invalidate()` on the RAM data/GOT, `scl_cache_invalidate()` on the flash image |
+| `xip::nopic` (`optimal`) | `scl_cache_clean_invalidate()` on both windows, again after `resolve_all()`; `scl_cache_clean()` on each main GOT slot patched by `patch_main()` |
+| `overlay` | `scl_cache_clean_invalidate()` on the window after each swap |
+
+On a cached core (Cortex-M7) override the two base hooks with CMSIS. Overriding
+`scl_cache_clean_invalidate()` as well is optional:
 
 ```c
 void scl_cache_clean(const void* a, size_t n) {
@@ -123,9 +145,9 @@ plus an IPC layer, not SCL symbol resolution.
 |---|---|---|
 | `static` | Lock hooks + existing TLS | Cross-core lock; cache maintenance on M7 |
 | `dynamic-nolib` | Lock hooks, eager binding, external table | Global handle pool and arena are still shared; one loader context |
-| `dynamic-newlib` | Lock hooks in XIP adapter; eager binding | Hosted heap and global error state remain |
+| `dynamic-newlib` | Lock hooks in the RAM loader and XIP adapter; no lazy binding | Hosted heap and global error state remain |
 | `reloc` | Lock hooks; caller-owned state | Give each task/core its own arena |
-| `optimal` | Lock hooks; no runtime resolution | Partition windows per core |
+| `optimal` | Lock hooks; no lazy binding | Partition windows per core |
 | `overlay` | Lock hook | The lock does not quiesce execution; never swap while another context runs from the window |
 
 ## 7. Remaining gaps (documented, not claimed)
