@@ -1,5 +1,6 @@
 /** @file dl.cpp @brief See dl.hpp. */
 #include "dynamic-nolib/dl.hpp"
+#include "scl/code-addr.h"
 #include "scl/log.h"
 #include "scl/os-hooks.h"
 #include "scl/cache.h"
@@ -310,8 +311,8 @@ loader::result<handle*> dlopen_source(loader::byte_source& src, const char* rawn
             using loader::detail::load_word;
             using loader::detail::store_word;
             using loader::detail::for_each_rel;
-            const std::uint32_t resolver = static_cast<std::uint32_t>(
-                reinterpret_cast<std::uintptr_t>(&dl_runtime_resolve)) | 1u;
+            const std::uint32_t resolver = scl_code_addr(static_cast<std::uint32_t>(
+                reinterpret_cast<std::uintptr_t>(&dl_runtime_resolve)));
             if (g_lazy_binding)
                 for_each_rel(reldyn, [&](std::uint32_t r_off, std::uint32_t r_info) {
                     if (loader::elf::r_type(r_info) ==
@@ -342,7 +343,7 @@ loader::result<handle*> dlopen_source(loader::byte_source& src, const char* rawn
         using loader::detail::load_word;
         using loader::detail::store_word;
         const std::uint32_t tramp =
-            static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&dl_cross_call)) | 1u;
+            scl_code_addr(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&dl_cross_call)));
         const std::span<const std::byte> tabs[2] = { h->lazy.jmprel, h->lazy_plt.jmprel };
         for (auto rel : tabs) {
             for_each_rel(rel, [&](std::uint32_t r_off, std::uint32_t r_info) {
@@ -392,7 +393,7 @@ loader::result<handle*> dlopen_source(loader::byte_source& src, const char* rawn
             if (tab_off < 0 || tab_off + 4 > static_cast<std::int64_t>(mem.size())) continue;
             const std::uint32_t w0 = load_word(mem, static_cast<std::size_t>(tab_off));
             if (w0 & 0x80000000u) continue;                          // extab uses inline-compact PR
-            if (!(w0 & 1u)) store_word(mem, static_cast<std::size_t>(tab_off), w0 | 1u);
+            if (!(w0 & 1u)) store_word(mem, static_cast<std::size_t>(tab_off), scl_code_addr(w0));
         }
     }
 
@@ -588,12 +589,12 @@ extern "C" std::uint64_t dl_cross_lookup(std::uint32_t got_slot_addr) noexcept {
         for (char c : name) scl_log_putc(c);
         if (g_cross_trace >= 2) {
             put_hex("  slot=0x", got_slot_addr);
-            put_hex(" tgt=0x", target | 1u);
+            put_hex(" tgt=0x", scl_code_addr(target));
             put_hex(" got=0x", got);
         }
         scl_log_putc('\n');
     }
-    return (static_cast<std::uint64_t>(got) << 32) | static_cast<std::uint64_t>(target | 1u);
+    return (static_cast<std::uint64_t>(got) << 32) | static_cast<std::uint64_t>(scl_code_addr(target));
 }
 
 void dl_enable_cross_call(bool on) noexcept { g_cross_call = on; }
@@ -639,9 +640,9 @@ void dl_dump_image(const handle& h) noexcept {
     using loader::detail::load_word;
     using loader::detail::name_at;
     const std::uint32_t tramp  =
-        static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&dl_cross_call))     | 1u;
+        scl_code_addr(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&dl_cross_call)));
     const std::uint32_t lazyfx =
-        static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&dl_runtime_resolve)) | 1u;
+        scl_code_addr(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&dl_runtime_resolve)));
 
     scl_log_puts("  [GOT/PLT] "); scl_log_puts(h.name);
     put_hex(" base=0x", h.base); put_hex(" got_base=0x", h.got_base);
@@ -724,9 +725,9 @@ static std::uint8_t got_slot_reloc(const handle& h, std::uint32_t off,
 void dl_dump_got_walkthrough(const handle& h) noexcept {
     using rt = loader::elf::rel_type;
     const std::uint32_t tramp  =
-        static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&dl_cross_call))     | 1u;
+        scl_code_addr(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&dl_cross_call)));
     const std::uint32_t lazyfx =
-        static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&dl_runtime_resolve)) | 1u;
+        scl_code_addr(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&dl_runtime_resolve)));
 
     scl_log_puts("\nGOT/PLT DIDACTIC WALKTHROUGH ("); scl_log_puts(h.name); scl_log_puts(")\n");
     scl_log_puts("=============================\n");

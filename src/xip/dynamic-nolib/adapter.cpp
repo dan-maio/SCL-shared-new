@@ -1,4 +1,5 @@
 #include "xip/dynamic-nolib/adapter.hpp"
+#include "scl/code-addr.h"
 #include "xip/segment-map.hpp"
 #include "xip/relocate.hpp"
 #include "xip/xip-handle.hpp"
@@ -185,7 +186,7 @@ void* dlopen(std::span<const std::byte> so_image, const char* name) noexcept {
         }
 
         const std::uint32_t tramp =
-            reinterpret_cast<std::uint32_t>(&xip_cross_call) | 1u;
+            scl_code_addr(reinterpret_cast<std::uint32_t>(&xip_cross_call));
         for (const char* s : { ".rel.dyn", ".rel.plt" }) {
             auto rel = flash_sec(s);
             for_each_rel(rel, [&](std::uint32_t r_off, std::uint32_t r_info) {
@@ -427,7 +428,7 @@ extern "C" std::uint64_t xip_cross_lookup(std::uint32_t got_slot_addr) noexcept 
         scl_log_putc('\n');
         return 0;
     }
-    return (static_cast<std::uint64_t>(got) << 32) | static_cast<std::uint64_t>(target | 1u);
+    return (static_cast<std::uint64_t>(got) << 32) | static_cast<std::uint64_t>(scl_code_addr(target));
 }
 
 const char* first_missing_import() noexcept {

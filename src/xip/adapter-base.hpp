@@ -1,5 +1,6 @@
 #pragma once
 #include "xip/xip-handle.hpp"
+#include "scl/code-addr.h"
 #include "xip/segment-map.hpp"
 #include "loader/elf-image.hpp"
 #include "loader/sources/memory-byte-source.hpp"
@@ -73,7 +74,7 @@ inline void set_extab_thumb_bits(std::span<std::byte> image, const loader::elf_i
         if (tab < 0 || tab + 4 > static_cast<std::int64_t>(image.size())) continue;
         const std::uint32_t w0 = load_word(image, static_cast<std::size_t>(tab));
         if (w0 & 0x80000000u) continue;                     // inline-compact extab
-        if (!(w0 & 1u)) store_word(image, static_cast<std::size_t>(tab), w0 | 1u);
+        if (!(w0 & 1u)) store_word(image, static_cast<std::size_t>(tab), scl_code_addr(w0));
     }
 }
 
@@ -139,7 +140,7 @@ inline int patch_main_imports_impl(std::span<std::byte> image,
     auto dynsym = sec(".dynsym");
     if (dynsym.empty()) return 0;
 
-    const std::uint32_t tramp = static_cast<std::uint32_t>(trampoline_addr) | 1u;
+    const std::uint32_t tramp = scl_code_addr(static_cast<std::uint32_t>(trampoline_addr));
     int n = 0;
 
     auto patcher = [&](std::uint32_t r_offset, std::uint32_t r_info) {

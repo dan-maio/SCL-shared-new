@@ -9,6 +9,7 @@
  * dynamic loader is involved.
  */
 #include "xip/static/adapter.hpp"
+#include "scl/code-addr.h"
 #include "xip/segment-map.hpp"
 #include "xip/relocate.hpp"
 #include "../adapter-base.hpp"
@@ -208,7 +209,7 @@ int bind_host_imports(std::span<std::byte> image, std::uintptr_t flash_base) noe
                 // the load-time check below passes; at call time xip_cross_lookup
                 // resolves it against the loaded-module registry, then main.
                 store_word(image, r_off,
-                           (reinterpret_cast<std::uint32_t>(&xip_cross_call)) | 1u);
+                           scl_code_addr(reinterpret_cast<std::uint32_t>(&xip_cross_call)));
             }
             ++n;
         }
@@ -485,7 +486,7 @@ extern "C" std::uint64_t xip_cross_lookup(std::uint32_t got_slot_addr) noexcept 
         scl_log_putc('\n');
         return 0;
     }
-    return (static_cast<std::uint64_t>(got) << 32) | static_cast<std::uint64_t>(target | 1u);
+    return (static_cast<std::uint64_t>(got) << 32) | static_cast<std::uint64_t>(scl_code_addr(target));
 }
 
 }  // namespace xip::stat

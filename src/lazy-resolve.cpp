@@ -1,5 +1,6 @@
 /** @file lazy-resolve.cpp @brief See lazy-resolve.hpp. */
 #include "loader/lazy-resolve.hpp"
+#include "scl/code-addr.h"
 #include "loader/detail/bytes.hpp"
 
 namespace loader {
@@ -20,7 +21,7 @@ lazy_resolve_slot(std::uint32_t got_off, const lazy_tables& t, symbol_source res
         const std::string_view name = name_at(t.dynstr, st_name);
         auto target = resolve(name);
         if (!target) return loader::unexpected(target.err());
-        return *target | 1u;   // Thumb bit so the trampoline's `bx` stays in Thumb state
+        return scl_code_addr(*target);   // the trampoline's `bx` must land in the right state
     }
     return loader::unexpected(error::SYMBOL_NOT_FOUND);
 }

@@ -4,6 +4,7 @@
  */
 #pragma once
 #include "loader/detail/bytes.hpp"
+#include "scl/code-addr.h"
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -30,7 +31,7 @@ inline void set_extab_thumb_bits(std::span<std::byte> image, std::uint32_t exidx
         if (tab < 0 || tab + 4 > static_cast<std::int64_t>(image.size())) continue;
         const std::uint32_t w0 = load_word(image, static_cast<std::size_t>(tab));
         if (w0 & 0x80000000u) continue;                     // inline-compact extab
-        if (!(w0 & 1u)) store_word(image, static_cast<std::size_t>(tab), w0 | 1u);
+        if (!(w0 & 1u)) store_word(image, static_cast<std::size_t>(tab), scl_code_addr(w0));
     }
 }
 
