@@ -445,7 +445,8 @@ extern "C" std::uint64_t xip_cross_lookup(std::uint32_t got_slot_addr) noexcept 
             }
         }
         if (target == 0) {
-            auto a = g_ctx.resolve(std::string(name).c_str());
+            // Not std::string: a call-time lookup must not allocate. name is NUL-terminated, in .dynstr.
+            auto a = g_ctx.resolve(name.data());
             if (a != 0) {
                 target = a;
                 got = 0;

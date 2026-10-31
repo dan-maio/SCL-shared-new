@@ -182,7 +182,8 @@ plus an IPC layer, not SCL symbol resolution.
 - On a Cortex-A, a module can be Thumb and main ARM, so `include/scl/code-addr.h` keeps each code
   address's own bit 0. Cortex-M still forces it, as before.
 - On the aarch32 µOS++ port, leaving the kernel's scheduler lock runs `cpsie i` unconditionally, and
-  `malloc` takes that lock. Do not call it inside a lock that relies on interrupts staying off.
+  `malloc` and `operator new` take that lock. Do not call them inside a lock that relies on interrupts
+  staying off. The loaders' call-time lookups must not allocate, for the same reason.
 - On a Cortex-A7, override the cache hooks: the defaults only issue barriers, and a stale instruction
   cache runs old code. Build `-fno-pic` modules with `-mword-relocations`, because the loaders do not
   handle `movw`/`movt`. `SCL-TESTS-shared-new/luckfox-lyra-shared/` shows both, with Thumb modules
