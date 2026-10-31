@@ -109,7 +109,7 @@ its rules.
 | Board | CPU | Where | Result (2026-10-30) |
 |---|---|---|---|
 | WeAct F411CE + W25Q64 | Cortex-M4 | `SCL-TESTS-shared-new`, `SCL-EXAMPLES-shared-new` | 22 tests and 25 examples pass at `9f1320f` |
-| Luckfox Lyra B + SD card | 3x Cortex-A7, µOS++ SMP | `SCL-TESTS-shared-new/luckfox-lyra-shared` | 45 of 48 tests pass so far at `86c83d2`; the run is not finished |
+| Luckfox Lyra B + SD card | 3x Cortex-A7, µOS++ SMP | `SCL-TESTS-shared-new/luckfox-lyra-shared` | 48 tests pass at `86c83d2` |
 | Pi-Zero RP2350B + PSRAM | 2x Cortex-M33, µOS++ SMP | `SCL-TESTS-shared-new/pico2-pizero-shared`, `SCL-EXAMPLES-shared-new/pizero` | 77 tests and 76 example firmwares pass at `86c83d2` |
 
 ## Further documentation
