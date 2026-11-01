@@ -1147,6 +1147,161 @@ The module and firmware must agree.  `check_arm_abi()` compares
 
 # Part 6 — Configure, build, and test
 
+## 6.0 Clone the repositories and their submodules
+
+The family is four repositories:
+
+| Repository | Role |
+|---|---|
+| `SCL-shared-new.git` | the loader sources; its `common-elf-reader` is the parser |
+| `elf32_read_parse-new.git` | the ARM ELF32 parser and A32/T32 relocation engine |
+| `SCL-TESTS-shared-new.git` | the on-target and host test suites |
+| `SCL-EXAMPLES-shared-new.git` | the WeAct, Pi-Zero and Lyra example apps |
+
+### Clone everything
+
+```sh
+git clone --recurse-submodules /home/dan/Downloads/GIT/SCL-shared-new.git
+git clone --recurse-submodules /home/dan/Downloads/GIT/SCL-TESTS-shared-new.git
+git clone --recurse-submodules /home/dan/Downloads/GIT/SCL-EXAMPLES-shared-new.git
+```
+
+`--recurse-submodules` is required.  A plain clone leaves the loader and parser
+folders empty.
+
+If the repositories are already cloned:
+
+```sh
+git submodule sync --recursive
+git submodule update --init --recursive
+```
+
+For one path only:
+
+```sh
+git submodule update --init --recursive SCL-shared
+git submodule update --init --recursive luckfox-lyra/SCL-shared
+```
+
+### What the submodule tree looks like
+
+```text
+SCL-shared-new/
+  common-elf-reader/          -> elf32_read_parse-new.git
+SCL-TESTS-shared-new/
+  common-elf-reader/          -> elf32_read_parse-new.git   (top-level convenience)
+  SCL-shared/                 -> SCL-shared-new.git
+    common-elf-reader/        -> elf32_read_parse-new.git   (nested)
+SCL-EXAMPLES-shared-new/
+  common-elf-reader/          -> elf32_read_parse-new.git   (top-level convenience)
+  float-reloc/SCL-shared/     -> SCL-shared-new.git
+    common-elf-reader/        -> elf32_read_parse-new.git
+  ... 26 more example SCL-shared submodules ...
+```
+
+The top-level and nested `common-elf-reader` checkouts are **independent
+submodule pointers**.  They normally point at the same parser commit; keep them
+in sync when you bump the parser.
+
+### Check what is checked out
+
+```sh
+git submodule status --recursive
+```
+
+Expected shape (the exact SHAs advance with development):
+
+```text
+ <sha> SCL-shared (remotes/origin/HEAD)
+ <sha> SCL-shared/common-elf-reader (heads/master)
+ <sha> common-elf-reader (heads/master)
+```
+
+A leading `-` means “not initialized” (`update --init`).  A leading `+` means
+“checked out at a different commit than the parent records”.  A parent
+`git status` line such as `modified: SCL-shared (new commits)` means you changed
+the submodule and must commit the new pointer in the parent.
+
+### How a pin works
+
+The parent repository does **not** store the submodule's files; it stores one
+commit id.  Updating a pin is three steps:
+
+```sh
+# 1. in the submodule: fetch and choose the commit
+git -C SCL-shared fetch origin
+git -C SCL-shared checkout <loader-sha>
+
+# 2. in the parent: stage the new pointer
+git add SCL-shared
+git commit -m "Bump SCL-shared to <loader-sha>"
+git push
+
+# 3. in the examples: every example has its own pointer
+for d in */SCL-shared; do
+    git -C "$d" fetch origin
+    git -C "$d" checkout <loader-sha>
+    git -C "$d" submodule update --init --recursive
+done
+git add -A
+git commit -m "Bump example SCL-shared submodules to <loader-sha>"
+git push
+```
+
+When the parser changes, the order is:
+
+```text
+elf32_read_parse-new.git
+  → SCL-shared-new/common-elf-reader pointer
+    → SCL-TESTS-shared-new/SCL-shared pointer
+    → SCL-EXAMPLES-shared-new/*/SCL-shared pointers
+```
+
+Never edit files inside a submodule and commit them only in the parent: commit
+them in the submodule repository first, push, then update the parent pointer.
+
+### Add a submodule
+
+```sh
+git submodule add /home/dan/Downloads/GIT/SCL-shared-new.git myapp/SCL-shared
+git -C myapp/SCL-shared submodule update --init --recursive
+git add .gitmodules myapp/SCL-shared
+git commit -m "Add myapp/SCL-shared"
+```
+
+`git submodule add` writes `.gitmodules` (path + URL) and the gitlink.  The
+nested parser comes from `SCL-shared/.gitmodules`; `--recursive` fetches it.
+
+For a new example directory, add `SCL-shared` first, then use the suite's CMake
+matrix to build it.
+
+### URLs and moving the tree
+
+The `.gitmodules` URLs in this workspace are **absolute local paths** (for
+example `/home/dan/Downloads/GIT/SCL-shared-new.git`).  On another machine,
+either clone from the same paths or rewrite the URLs:
+
+```sh
+git config -f .gitmodules submodule.SCL-shared.url <new-url>
+git submodule sync --recursive
+git submodule update --init --recursive
+```
+
+The parser URL is likewise in `SCL-shared-new/.gitmodules` and in every
+`SCL-shared/.gitmodules`.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `-` in `submodule status` | `git submodule update --init --recursive` |
+| `+` in `submodule status` | `git -C <path> checkout <recorded-sha>` |
+| `modified: SCL-shared (new commits)` | `git add SCL-shared` and commit in the parent |
+| `fatal: no url found for submodule` | `git submodule sync --recursive` |
+| `common-elf-reader` empty | `git -C SCL-shared submodule update --init --recursive` |
+| wrong loader version in an example | check `git -C <example>/SCL-shared rev-parse HEAD`; it should match the tests' `SCL-shared` |
+| clone is a plain directory | initialize git first, or clone the repository rather than copying a worktree |
+
 ## 6.1 Prerequisites
 
 | Tool | Version used here | Purpose |
