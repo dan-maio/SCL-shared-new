@@ -117,4 +117,9 @@ its rules.
 The loader-model guides and test benches live in the sibling repo
 `SCL-TESTS-shared-new` (`docs/LOADER-CHOICE.md`, `docs/import_in_project_full.md`,
 `docs/resolving-module-imports.md`). Worked WeAct examples are in
+
+ARM-state (A32) module support, which is not the same as running ARM *main* with
+Thumb modules, is analysed with an implementation plan in
+[`docs/ARM-A32-SUPPORT.md`](docs/ARM-A32-SUPPORT.md) (also
+[`docs/ARM-A32-SUPPORT.pdf`](docs/ARM-A32-SUPPORT.pdf)).
 `SCL-EXAMPLES-shared`, which still uses the original `SCL-shared`.
