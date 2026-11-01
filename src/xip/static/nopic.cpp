@@ -10,6 +10,7 @@
  * module or from main) -> resolve_any() — written into the RAM target.
  */
 #include "xip/static/nopic.hpp"
+#include "loader/arm-reloc.hpp"
 #include "loader/elf-image.hpp"
 #include "loader/sources/memory-byte-source.hpp"
 #include "loader/detail/bytes.hpp"
@@ -212,13 +213,25 @@ bool load(std::span<const std::byte> blob, PModule& out) noexcept {
                 scl_log_puts("[nopic] reloc target outside windows\n");
                 return;
             }
-            // Only ABS32 has an addend: a JUMP_SLOT's word holds the PLT stub's address.
-            const bool is_rel32 = rtype == static_cast<std::uint8_t>(loader::elf::rel_type::REL32);
-            const std::uint32_t addend =
-                rtype == static_cast<std::uint8_t>(loader::elf::rel_type::ABS32) || is_rel32
-                    ? load_word(std::span<const std::byte>{ target, 4 }, 0) : 0u;
-            store_word(std::span<std::byte>{ target, 4 }, 0,
-                       value + addend - (is_rel32 ? r_off : 0u));
+            std::uint32_t addend = 0;
+            if (!loader::arm::decode_addend(rtype, target, addend)) {
+                scl_log_puts("[nopic] unsupported relocation type ");
+                scl_log_put_hex("0x", rtype);
+                scl_log_puts("\n");
+                return;
+            }
+            const loader::arm::isa site =
+                loader::arm::is_thumb_branch(rtype) ? loader::arm::isa::thumb
+                                                    : loader::arm::isa::arm;
+            const loader::arm::context ctx{value, addend, r_off, site};
+            if (auto e = loader::arm::apply(rtype, target, ctx); e != loader::error::OK) {
+                scl_log_puts("[nopic] relocation failed: ");
+                scl_log_put_hex("type=0x", rtype);
+                scl_log_put_hex(" site=0x", r_off);
+                scl_log_put_hex(" target=0x", value);
+                scl_log_puts("\n");
+                return;
+            }
             ++patched;
         });
     }

@@ -18,4 +18,13 @@ static inline uint32_t scl_code_addr(uint32_t addr) {
 #endif
 }
 
+/* Force a specific instruction set.  Use these for a trampoline or a GOT slot
+ * whose caller expects a particular state; an ordinary symbol address already
+ * carries the bit the compiler/linker gave it. */
+static inline uint32_t scl_thumb_addr(uint32_t addr) { return addr | 1u; }
+static inline uint32_t scl_arm_addr(uint32_t addr)   { return addr & ~1u; }
+static inline uint32_t scl_code_addr_for(int thumb, uint32_t addr) {
+    return thumb ? scl_thumb_addr(addr) : scl_arm_addr(addr);
+}
+
 #endif
