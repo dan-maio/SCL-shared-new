@@ -832,6 +832,232 @@ After that phase, the loader may clean/invalidate caches, register
 
 ---
 
+## 4.10 How bytes arrive at the loader: `loader::byte_source`
+
+The loader does not have a `byte()` call.  The interface is
+`loader::byte_source`, a random-access reader with two methods:
+
+```cpp
+class byte_source {
+  virtual std::size_t size() const noexcept = 0;
+  virtual result<void> read_at(std::size_t offset,
+                               std::span<std::byte> out) noexcept = 0;
+};
+```
+
+`read_at()` must fill exactly `out.size()` bytes starting at `offset`; returning
+`SHORT_READ` means the source does not have them.  The parser calls it for the
+ELF header, each program/section header, the section-name table, and (in the
+dynamic loaders) each section it needs.  The loader may also bypass it and use a
+`std::span` directly when the whole image is already in memory.
+
+### 4.10.1 The data paths at a glance
+
+```text
+  host file ── semihosting ──► RAM buffer ──span──► memory_byte_source ─┐
+  host file ── fd_byte_source (open/lseek/read) ────────────────────────┤
+  SD card  ── FatFs load_file ──► RAM buffer ──span──► memory_byte_source┤
+  flash FS ── fs_blob (memory-mapped) ──span────────► memory_byte_source ┤
+  SPI NOR  ── SPI read ─────────► RAM buffer ──span──► memory_byte_source┤
+  linked-in ── LMA/VMA ─────────► overlay copy (no byte_source)          │
+                                                                        ▼
+                                                              elf_image::parse
+```
+
+Every path ends in either a `std::span<const std::byte>` wrapped by
+`memory_byte_source`, or a `byte_source` the parser can call directly.
+
+### 4.10.2 Semihosting → RAM → `memory_byte_source`
+
+This is the path used by the SCL examples and the Lyra/Pi-Zero tests.  The app
+opens the file, asks for its length, reads it, and closes it; the loader then sees
+a memory span.
+
+```cpp
+// AArch32: svc 0x123456.  Cortex-M: bkpt 0xAB.
+// SYS_OPEN=0x01, SYS_CLOSE=0x02, SYS_READ=0x06, SYS_FLEN=0x0C.
+static std::byte g_file[32 * 1024];
+
+auto bytes = read_semihost_file("libprov.so", g_file, sizeof g_file);
+if (bytes.empty()) return false;
+
+loader::memory_byte_source src{bytes};
+auto h = fw::dlopen_source(src, "libprov");
+```
+
+The important properties:
+
+* one open, one length, one read, one close per module;
+* the buffer must stay alive while the loader uses it;
+* `SYS_FLEN` gives the exact size; do not guess;
+* the path is a **host** path (relative to the debugger's working directory);
+* the read is a debugger stop/resume, so do it at boot, not in a loop.
+
+The AArch32/Cortex-M `semi()` and `read_semihost_file()` implementations are in
+§4.9.8.
+
+### 4.10.3 Semihosting/POSIX fd → `fd_byte_source`
+
+`fd_byte_source` is the other built-in source.  It does **not** read the whole
+file; it seeks and reads on demand:
+
+```cpp
+auto f = loader::fd_byte_source::open_file("libprov.pic.so");
+if (!f) return false;
+
+auto img = loader::elf_image::parse(*f);      // reads only the header
+auto text = img->find_section(".text");       // reads the section table
+// ... the loader reads what it needs, one read_at at a time ...
+```
+
+Internals:
+
+* `open_file()` calls `::open(path, O_RDONLY)`, then `lseek(fd, 0, SEEK_END)` to
+  cache the size, then seeks back;
+* `read_at()` does `lseek(offset)` + a loop of `::read()` until `out` is full;
+* the destructor closes the fd.
+
+On a bare-metal target, `open/read/lseek` are the C library's calls.  They can be
+implemented over semihosting, or over the board's own storage.  If they are not,
+use the explicit semihosting read into RAM and `memory_byte_source` instead.
+`scl::static::Module::load_file()` is the loader that uses this path.
+
+### 4.10.4 SD card / FatFs → RAM → `memory_byte_source`
+
+The Lyra has a microSD card.  The board support exposes `sd::SdCard` and the
+`fatfshw` helper; the card is the **boot card**, so the files live under
+`tests/` and the FAT root is never touched.
+
+```cpp
+#include <sd.hpp>
+#include <fatfs_hw.hpp>
+
+static sd::SdCard card;
+static std::byte buf[64 * 1024];
+
+bool load_from_sd(const char* name) {
+    if (!card.init()) return false;              // needs the kernel clock
+    fatfshw::bind_card(card);
+    if (!fatfshw::mount_volume()) return false;
+    if (!fatfshw::ensure_tests_dir()) return false;
+
+    std::uint32_t size = 0;
+    if (!fatfshw::file_size(name, size)) return false;
+    if (size > sizeof buf) return false;
+    if (!fatfshw::load_file(name, buf, size)) return false;
+
+    loader::memory_byte_source src{
+        std::span<const std::byte>{buf, size}};
+    auto h = fw::dlopen_source(src, name);
+    return h.has_value();
+}
+```
+
+Notes:
+
+* `fatfshw` files are 8.3 names under `tests/`; `name` is the leaf, e.g.
+  `libprov.so`.
+* `file_size()` first, then `load_file()` with the exact size; `load_file` does
+  not allocate.
+* Card I/O happens from one core/task at a time.  The Lyra examples mount the card
+  in `app_start()` on core 0 before the other cores are released.
+* The current Lyra examples use the card for the `tests/sclsd.bin` data file; the
+  same `load_file` path can load a module.
+* If the module is large, read it in pieces or use a `byte_source` adapter over
+  `load_file_at()`; `memory_byte_source` needs the whole image.
+
+### 4.10.5 Flash filesystem → memory-mapped span
+
+On a board whose internal flash is memory-mapped (RP2350, STM32 with the flash
+cache, WeAct internal flash), the archive can return a pointer directly:
+
+```cpp
+#include "fs-archive.hpp"       // the test's flatfs, not part of SCL
+
+if (const fw::FsEntry* e = fw::fs_find("libprov.so")) {
+    std::span<const std::byte> bytes{fw::fs_blob(*e), e->size};
+    loader::memory_byte_source src{bytes};
+    auto h = fw::dlopen_source(src, "libprov");
+    // ...
+}
+```
+
+The flat archive (`FsSuper`, `FsEntry`, `fs_add`, `fs_find`, `fs_entry`,
+`fs_blob`) is a small append-log in one flash region; `fs_add()` is how a module
+gets there (usually at provisioning time, from SD/semihosting).  `fs_blob()`
+returns a pointer into the mapped flash, so `memory_byte_source` is zero-copy.
+
+On a **SPI NOR** flash (the WeAct W25Q64), the flash is not memory-mapped.  The
+SPI archive's `fs_blob()` returns null; the module must be read through the SPI
+driver into a RAM buffer, then wrapped in `memory_byte_source`.  The provisioning
+step is the same: write the bytes to the archive with the driver, and at run time
+read them back into RAM before the loader.
+
+### 4.10.6 Linked-in overlay: no bytes arrive
+
+`scl::overlay` does not use a byte source at all.  The host linker places each
+module's bytes in the firmware image at its own LMA; `scl_overlay_load()` copies
+LMA → VMA.  There is no file, no parser, no relocation.  See §4.8.
+
+### 4.10.7 A custom `byte_source`
+
+If the storage is not a file (a ring buffer, a network stream, an encrypted
+container), implement the two methods directly:
+
+```cpp
+class my_source final : public loader::byte_source {
+public:
+    explicit my_source(const my_storage& s) : s_(s) {}
+    std::size_t size() const noexcept override { return s_.count(); }
+    loader::result<void>
+    read_at(std::size_t off, std::span<std::byte> out) noexcept override {
+        if (off > s_.count() || out.size() > s_.count() - off)
+            return loader::unexpected(loader::error::SHORT_READ);
+        return s_.copy(off, out);
+    }
+private:
+    const my_storage& s_;
+};
+```
+
+The source must:
+
+* report the exact total size;
+* fill `out` completely or return `SHORT_READ`;
+* keep its backing storage valid for the whole load;
+* be safe for the parser's access pattern (random reads; no assumption of
+  sequential access).
+
+### 4.10.8 Choosing the path
+
+| Situation | Path | Why |
+|---|---|---|
+| debugger is attached; small module | semihosting → RAM | simplest; one read |
+| debugger is attached; big module | `fd_byte_source` or chunked read | avoids a huge RAM copy, but many traps |
+| Lyra, module on SD | FatFs `load_file` → RAM | SD is the board's storage |
+| RP2350, module in internal flash | `fs_blob` → span | flash is memory-mapped |
+| WeAct W25Q64 | SPI read → RAM | SPI NOR is not memory-mapped |
+| linked-in, one resident | overlay | no I/O at all |
+| host test/QEMU | file/vector → span | no hardware |
+
+### 4.10.9 Pitfalls specific to the byte path
+
+* **Lifetime** — a `memory_byte_source` points at the caller's buffer; do not
+  free or reuse it until the load is complete.
+* **Exact size** — `read_at` is all-or-nothing; a truncated file gives
+  `SHORT_READ`, not a partial image.
+* **No caching in the source** — the parser may ask for the same section header
+  many times; `fd_byte_source` does a real seek/read each time.  A custom source
+  may cache, but must stay coherent.
+* **Semihosting paths** — host-relative, debugger-required, stop/resume per call.
+* **FAT names** — 8.3, under `tests/`, boot-card files untouched.
+* **Memory-mapped flash** — `fs_blob()` is valid only for mapped internal flash;
+  check for null on SPI.
+* **Cache** — after copying code into RAM, clean/invalidate before executing it;
+  after writing a flash image, make sure the flash cache sees it.
+
+---
+
 # 5. Where `common-elf-reader` is used — the complete matrix
 
 Legend for the table:
