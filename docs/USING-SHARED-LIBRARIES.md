@@ -1222,22 +1222,118 @@ A leading `-` means “not initialized” (`update --init`).  A leading `+` mean
 `git status` line such as `modified: SCL-shared (new commits)` means you changed
 the submodule and must commit the new pointer in the parent.
 
-### How a pin works
+### Why pin a commit id, not a branch
 
-The parent repository does **not** store the submodule's files; it stores one
-commit id.  Updating a pin is three steps:
+A branch name is a moving label.  `master` today and `master` tomorrow may be
+different code.  A tag is better, but a tag can be moved or re-created.  A
+**commit id is the only immutable name** in Git: it hashes the tree, the parents
+and the metadata.
+
+SCL pins a commit id for four practical reasons:
+
+1. **Reproducibility.**  A clone one year later checks out the exact loader and
+   parser used for a test run.  The tested-on table records `aaf2120`, not
+   "whatever master was".
+2. **A test result is attached to code.**  If the loader changes, the result
+   must be re-run and the pin moved deliberately.  A moving branch would make
+   yesterday's PASS meaningless today.
+3. **No silent drift.**  A build in CI, on a laptop, or on the bench uses the
+   same sources.  Nothing fetches a newer loader behind your back.
+4. **Audit and bisect.**  You can check out the pin, reproduce the failure, and
+   bisect inside the loader or the parser.
+
+The pin is a **snapshot**, not a version range.  There is no "loader >= 1.2";
+there is one exact commit.
+
+### What Git actually stores
+
+A submodule is not a copy of files.  The parent tree contains a special entry:
+
+```text
+$ git ls-tree HEAD SCL-shared
+160000 commit <sha>	SCL-shared
+```
+
+The mode `160000` means **gitlink**: the entry's "object" is a commit id, not a
+tree.  The files live in the submodule's own repository.  The parent also tracks
+`.gitmodules`, which stores only the path and the URL.
+
+So a parent commit records:
+
+| Stored in | What |
+|---|---|
+| `.gitmodules` (a normal file) | submodule path + URL |
+| the parent tree (mode `160000`) | one commit id — the pin |
+| the submodule repository | the actual files at that commit |
+
+`git add SCL-shared` reads the submodule's current `HEAD` and stages that commit
+id.  `git commit` writes the gitlink into the parent tree.  The submodule's
+files are never copied into the parent.
+
+`git submodule status` abbreviates the id; `git ls-tree` and
+`git -C SCL-shared rev-parse HEAD` show the full one.
+
+### Transitive pins
+
+A pin is transitive through nested submodules:
+
+```text
+SCL-shared at commit X
+  tree contains gitlink -> elf32_read_parse-new at commit Y
+```
+
+Pinning the loader at X therefore pins the parser at Y as well, even though the
+parent only names X.  A recursive clone reads X's `.gitmodules` and checks out Y.
+
+Two parser checkouts are independent pointers:
+
+* `SCL-shared-new/common-elf-reader` — the loader's parser;
+* `SCL-TESTS-shared-new/common-elf-reader` and
+  `SCL-EXAMPLES-shared-new/common-elf-reader` — top-level convenience pins;
+* the nested `SCL-shared/common-elf-reader` — what the loader itself builds.
+
+They normally point at the same parser commit.  If one is bumped and the others
+are not, two parser versions are built in the same tree.  Keep them in sync
+when the parser changes.
+
+### Inspecting a pin
 
 ```sh
-# 1. in the submodule: fetch and choose the commit
+# the gitlink recorded by the parent
+git ls-tree HEAD SCL-shared
+
+# the commit actually checked out in the working tree
+git -C SCL-shared rev-parse HEAD
+git -C SCL-shared log -1 --oneline
+
+# abbreviated view, with - / + markers
+git submodule status --recursive
+
+# how the pointer changed in a commit
+git diff --submodule=log HEAD~1 HEAD -- SCL-shared
+```
+
+A submodule checkout is a **detached HEAD**: it is at the pinned commit, not on
+a branch.  `git -C SCL-shared branch --show-current` is empty.  That is normal;
+do not read it as an error.
+
+### Moving a pin safely
+
+```sh
+# 1. in the submodule: fetch the new commit and select it
 git -C SCL-shared fetch origin
 git -C SCL-shared checkout <loader-sha>
+git -C SCL-shared submodule update --init --recursive   # nested parser
 
-# 2. in the parent: stage the new pointer
+# 2. build and test the new combination (Part 6.7)
+#    If the result regresses, stop and do not commit the pointer.
+
+# 3. in the parent: stage the new gitlink and commit
 git add SCL-shared
 git commit -m "Bump SCL-shared to <loader-sha>"
 git push
 
-# 3. in the examples: every example has its own pointer
+# 4. examples: each has its own gitlink; update them as one parent commit
 for d in */SCL-shared; do
     git -C "$d" fetch origin
     git -C "$d" checkout <loader-sha>
@@ -1248,7 +1344,7 @@ git commit -m "Bump example SCL-shared submodules to <loader-sha>"
 git push
 ```
 
-When the parser changes, the order is:
+The parser update order is:
 
 ```text
 elf32_read_parse-new.git
@@ -1256,6 +1352,30 @@ elf32_read_parse-new.git
     → SCL-TESTS-shared-new/SCL-shared pointer
     → SCL-EXAMPLES-shared-new/*/SCL-shared pointers
 ```
+
+**Push the submodule commit before the parent pointer.**  A parent that points
+at an unpushed commit is not cloneable: the clone asks the submodule remote for
+that id and gets "not our ref".
+
+### What a pin does *not* guarantee
+
+A commit id pins sources, not the world:
+
+* the URL must still exist and contain the commit;
+* the toolchain, flags, linker script and board support are separate;
+* generated fixtures are not in the pin unless they are committed;
+* a dirty submodule can be at a different commit than the pin — `git status`
+  shows that as `modified: SCL-shared (new commits)`;
+* a tag or branch name is **not** stored in the gitlink; only the id is.
+
+### Why every example has its own pin
+
+The examples repository records 27 independent gitlinks, one per `*/SCL-shared`.
+They are committed together in one parent commit, so a clone gets the same set,
+but each can be inspected or moved separately.  The usual rule is: move them as
+a batch, test the batch, and commit the batch.  A single example can lag
+temporarily, but it is then visibly different from the rest in
+`git submodule status`.
 
 Never edit files inside a submodule and commit them only in the parent: commit
 them in the submodule repository first, push, then update the parent pointer.
