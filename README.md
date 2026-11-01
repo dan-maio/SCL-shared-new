@@ -106,11 +106,11 @@ its rules.
 
 ## Tested on
 
-| Board | CPU | Where | Result (2026-10-30) |
+| Board | CPU | Where | Result (2026-11-01) |
 |---|---|---|---|
-| WeAct F411CE + W25Q64 | Cortex-M4 | `SCL-TESTS-shared-new`, `SCL-EXAMPLES-shared-new` | 22 tests and 25 examples pass at `9f1320f` |
-| Luckfox Lyra B + SD card | 3x Cortex-A7, µOS++ SMP | `SCL-TESTS-shared-new/luckfox-lyra-shared`, `luckfox-lyra-arm-shared`, `SCL-EXAMPLES-shared-new/luckfox-lyra` | 48 tests, 67 example firmwares and 9 ARM-state (A32) tests pass; tests at `86c83d2`, examples at `1eafdbe` (now pinned at `aaf2120`), A32 tests at `eb2ae55` (pinned `aaf2120`) (2026-11-01) |
-| Pi-Zero RP2350B + PSRAM | 2x Cortex-M33, µOS++ SMP | `SCL-TESTS-shared-new/pico2-pizero-shared`, `SCL-EXAMPLES-shared-new/pizero` | 77 tests and 76 example firmwares pass at `86c83d2` |
+| WeAct F411CE + W25Q64 | Cortex-M4 | `SCL-TESTS-shared-new`, `SCL-EXAMPLES-shared-new` | 22 tests pass at `aaf2120`; 25 examples at `9f1320f` |
+| Luckfox Lyra B + SD card | 3x Cortex-A7, µOS++ SMP | `SCL-TESTS-shared-new/luckfox-lyra-shared`, `luckfox-lyra-arm-shared`, `SCL-EXAMPLES-shared-new/luckfox-lyra` | 48 tests, 9 ARM-state (A32) tests and 67 example firmwares pass; tests at `aaf2120`, examples at `1eafdbe` (pinned `aaf2120`) |
+| Pi-Zero RP2350B + PSRAM | 2x Cortex-M33, µOS++ SMP | `SCL-TESTS-shared-new/pico2-pizero-shared`, `SCL-EXAMPLES-shared-new/pizero` | 77 tests pass at `aaf2120`; 76 example firmwares at `86c83d2` |
 
 ## Further documentation
 
