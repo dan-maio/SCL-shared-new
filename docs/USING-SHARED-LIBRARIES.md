@@ -467,6 +467,371 @@ work.
 
 ---
 
+## 4.9 Before relocation: how the bytes get into the app
+
+This section slows down and looks at the phase that happens **before** the first
+relocation or patch.  It answers: which file is opened, who reads it, which
+buffer is used, which parser calls happen, and where the copy ends.
+
+### 4.9.1 Two different "loads"
+
+Do not confuse these:
+
+| What is loaded | By whom | Which file | When |
+|---|---|---|---|
+| the **firmware** (loader + app) | OpenOCD / debugger / boot ROM | the firmware `.elf` or `.hex` | flashing/debug |
+| the **module** (shared library) | the application, through a storage front-end | `.rel.o`, `.so`, `.pic.so`, `.opt.so`, a flash blob, or nothing (overlay) | at boot, or before use |
+
+The debugger flashes the **firmware**.  It does not normally flash the module for
+the RAM-based loaders: the app reads the module itself.  For XIP, the module
+image is instead provisioned to flash/DRAM (by the build, by the app, or by a
+debugger command), and the loader consumes that image as a blob.
+
+So "loading a shared library" starts with an ordinary application read — not with
+OpenOCD.
+
+### 4.9.2 Where the module bytes come from
+
+| Front-end | Typical code | What the app passes to the loader |
+|---|---|---|
+| **Semihosting host file** | `SYS_OPEN`/`SYS_FLEN`/`SYS_READ`/`SYS_CLOSE` into a RAM buffer | `std::span<const std::byte>` or `memory_byte_source` |
+| **POSIX / semihosting fd** | `fd_byte_source::open_file(path)` | a `loader::byte_source&` |
+| **SD card / FatFs** | `sd::SdCard`, `fatfshw::load_file("tests/sclsd.bin", ...)` | a RAM span (or a custom `byte_source`) |
+| **Flash archive / linked blob** | the app points at a flash address or a const array | a `std::span` over flash/const data |
+| **Linked-in overlay** | the linker emits `LMA`/`VMA`/`SIZE` symbols | no bytes; a descriptor table |
+| **Host test** | file read or `std::vector` | `memory_byte_source` |
+
+The loader core only ever sees the last column.  That is why the same code runs
+in host tests, QEMU, and on three boards.
+
+### 4.9.3 The buffer and the byte source
+
+There are two storage styles:
+
+* **Whole file in RAM** — the app allocates a buffer, reads the file into it, and
+  passes a `std::span<const std::byte>`.  This is the normal case in the
+  examples and tests.
+* **Random-access source** — the app passes a `loader::byte_source`; the parser
+  reads exactly the bytes it needs.  `memory_byte_source` wraps a RAM span;
+  `fd_byte_source` wraps a file descriptor (POSIX or semihosting-backed).
+
+Sizing the buffer:
+
+| Loader | How the size is known |
+|---|---|
+| `scl::reloc` | the arena is fixed by the app; sections are packed into it |
+| `scl::static` | `Module::image_size(path)`, or the caller's `exec_buf` size |
+| `scl::optimal` | the fixed `_sxip_text_*`/`_sxip_data_*` windows |
+| `scl::xip-static` | the text is in the image/flash; the data segment is copied to a RAM arena |
+| `scl::dynamic-nolib` | `elf_image::image_size()` (highest `PT_LOAD` end) |
+| `scl::dynamic-newlib` | `elf_image::image_size()` plus journal capacity |
+| `scl::xip-dynamic-*` | the data segment is copied to a RAM arena; text stays in the image |
+| `scl::overlay` | `SIZEOF(.ovN)` from the linker script |
+
+For a semihosting read, `SYS_FLEN` gives the file length before the read; for
+`fd_byte_source`, `lseek(fd, 0, SEEK_END)` does the same.
+
+### 4.9.4 The universal pre-relocation sequence
+
+Every method does these steps in some form; only the function names and the
+destination differ.
+
+```text
+1. obtain the bytes         semihosting/SD/flash/linked-in
+2. wrap them                span or byte_source
+3. parse the ELF header     elf_image::parse (or the ET_REL parser)
+4. enumerate what to copy   PT_LOAD segments / SHF_ALLOC sections
+5. validate the ranges      file offset + filesz, vaddr + memsz, destination
+6. reserve the destination  arena / exec buffer / fixed window / heap
+7. copy                      memcpy filesz bytes
+8. zero the tail             memset memsz - filesz (bss)
+9. (then) relocations        apply / patch / resolve
+```
+
+Steps 1–8 are the "load of the binary file".  Step 9 is the relocation phase,
+covered in §4.1–4.8 and §5.
+
+### 4.9.5 Exact call chains per method
+
+#### `scl::reloc`
+
+```text
+app: read_host_file("name.rel.o")          // semihosting/span
+  → reloc::load_set({images}, arena, resolve)
+      → place_module(image, arena, used, m)
+          - checks ELF magic, EM_ARM, ET_REL
+          - reads e_shoff/e_shentsize/e_shnum with load_word/load16
+          - for each SHF_ALLOC section:
+              align `used`, check arena, record m.sec_base[i]
+              SHT_NOBITS  → memset(arena + used, 0, size)
+              SHT_PROGBITS→ memcpy(arena + used, image + sh_offset, size)
+      → apply_relocs(...)                  // relocation starts here
+```
+
+No `elf_image::parse`; the loader reads the section headers itself with
+`loader/detail/bytes.hpp`.  The arena is the destination.
+
+#### `scl::static`
+
+```text
+app: Module::load_file(path, exec_buf, exec_sz, syms)
+  → elf_reader::open_elf(path)
+      → fd_byte_source::open_file(path)    // open + seek-end for size
+      → verify_elf() → elf_image::parse(*src_)
+  → scl_loader_lock()
+  → Module::build(...)
+      → shlib_loader::load_bin(exec_buf, exec_sz)
+          - needed = efr_.get_binary_size()  (= elf_image::image_size)
+          - check needed <= exec_sz
+          - for each program header:
+              efr_.load_segments({exec_buf, needed}, ph)
+                → read_at_offset({exec_buf + p_vaddr, p_filesz}, p_offset)
+                   → src_->read_at(p_offset, ...)   // fd/semihosting
+                → memset(exec_buf + p_vaddr + p_filesz, 0, memsz - filesz)
+      → populate_helper_sections()         // .rel.dyn/.rel.plt/...
+      → patch_shlib()                      // relocation starts here
+```
+
+`load_buf()` is the same `build()` with a `memory_byte_source` instead of the fd.
+`Module::image_size(path)` opens the file only to return the size.
+
+#### `scl::xip-static`
+
+```text
+provision time (before flash):
+  xip::stat::bind_host_imports(image, flash_base)
+    → elf_image::parse(memory_byte_source)
+    → set_extab_thumb_bits, prelink_flash_data
+    → walk .rel.plt/.rel.dyn, patch JUMP_SLOT slots
+  (then write `image` to flash, or leave it in the DRAM image region)
+
+load time:
+  xip::stat::load(blob, module)
+    → elf_image::parse(memory_byte_source)
+    → classify_segments(blob, seg)        // program headers, split check
+    → text_is_immutable(blob, seg)
+    → alloc(data_memsz) in fw::image_arena()
+    → memset(ram, 0, data_memsz)
+    → memcpy(ram, blob + seg.data_off, seg.data_filesz)
+    → text_base = blob.data() + seg.text_off   // already in flash/DRAM
+    → apply_rel_xip(...)                  // relocation starts here
+```
+
+The text is **not copied** at load; it is already at `text_base`.  Only the RW
+segment is copied to RAM.  This is the two-base model.
+
+#### `scl::optimal`
+
+```text
+app: read the .opt.so into a RAM span
+  → xip::nopic::load(blob, m)
+      → elf_image::parse(memory_byte_source(blob))
+      → program_header loop: find R-X and RW PT_LOAD
+      → check both VAs fit _sxip_text_*/_sxip_data_*
+      → memcpy(text_vaddr, blob + text_off, text_filesz)
+      → memcpy(data_vaddr, blob + data_off, data_filesz)
+      → memset(data_vaddr + data_filesz, 0, data_memsz - data_filesz)
+      → sec(".dynsym"/".dynstr"/".rel.dyn"/".rel.plt")  // find_section + blob spans
+      → relocation loop                    // relocation starts here
+```
+
+Text and data are copied to the fixed windows; the image is a 0-bias copy.
+
+#### `scl::dynamic-nolib`
+
+```text
+app: fw::dlopen_source(src, name)          // src = memory or fd byte_source
+  → elf_image::parse(src)
+  → image_size() = highest PT_LOAD end
+  → image_arena().alloc(size)
+  → memset(mem, 0, size)
+  → for each PT_LOAD:
+        src.read_at(p_offset, mem + p_vaddr, p_filesz)
+  → g_sc.load(img, src)                    // read shdrs + .shstrtab once
+  → reloc_applier::apply_rel(...)          // relocation starts here
+```
+
+With a `memory_byte_source`, the app has already read the whole file into RAM.
+With `fd_byte_source`, each `read_at` is a seek+read (potentially semihosting).
+
+#### `scl::dynamic-newlib`
+
+```text
+app: dynamic_linker::load_from_source(src)
+  → elf_image::parse(src)
+  → image_base() + image_size()
+  → image_memory::load_segments(img, journal_extra)
+      - make_unique<byte[]>(size + extra)
+      - for each PT_LOAD:
+          img.source().read_at(p_offset, dst + (p_vaddr - base), p_filesz)
+          memset(dst + ..., 0, memsz - filesz)
+  → collect_relocations()                  // all SHT_REL in one buffer
+  → read .dynsym/.dynstr into vectors      // find_section + source().read_at
+  → relocator::compute(...)                // build the plan
+  → apply_plan(...)                        // relocation starts here
+```
+
+#### `scl::xip-dynamic-nolib` / `scl::xip-dynamic-newlib`
+
+```text
+app: xip::nolib::dlopen(so_image, name)   // or xip::newlib::dlopen
+  → elf_image::parse(memory_byte_source(so_image))
+  → classify_segments(so_image, seg)
+  → text_is_immutable(so_image, seg)
+  → can_xip ?
+      yes: alloc(data_memsz) in image_arena()
+           memset + memcpy(data_filesz)   // RW only
+           text_base = so_image.data() + seg.text_off
+      no:  alloc(max_va - min_va)
+           memset + copy every PT_LOAD     // whole image in RAM
+  → apply_rel_xip(...)                     // relocation starts here
+```
+
+`patch_main_imports` / `bind_host_imports` are provision-time calls that parse
+the image again and pre-link external `JUMP_SLOT`s before it is written to flash.
+
+#### `scl::overlay`
+
+```text
+link time:  the linker places every overlay module at the same VMA,
+            each with its own LMA, and emits ADDR/LOADADDR/SIZEOF symbols.
+
+boot/load:  scl_overlay_load(&region, index)
+              → memcpy(vma, lma, size)
+              → cache clean/invalidate
+              → DSB/ISB
+```
+
+No file is opened, no ELF is parsed, no relocation is applied.  The host linker
+did all of that.
+
+### 4.9.6 File names and what the file extension means
+
+The loader checks the ELF magic, not the extension.  The extensions below are
+conventions used by the examples/tests:
+
+| Name | Built as | Consumer |
+|---|---|---|
+| `floatlib.rel.o`, `libprov.rel.o` | `-r` ET_REL | `scl::reloc` |
+| `floatlib.so`, `libprov.so` | `-fpic -msingle-pic-base ... -shared` | `scl::dynamic-nolib`, `scl::xip-dynamic-*` |
+| `floatlib.pic.so`, `libprov.pic.so` | `-fPIC -shared` | `scl::static`, `scl::dynamic-newlib` |
+| `floatlib.opt.so`, `libprov.opt.so` | `-fno-pic -mlong-calls -shared -T nopic-split.ld` | `scl::optimal` |
+| a split `.so` | `-T xip-split.ld` | `scl::xip-static` |
+| no file | linked into the firmware | `scl::overlay` |
+
+In the SCL tests, `FIXTURE_DIR` and `FIXTURE_EXT` decide the path, e.g.
+`fixtures/libprov.rel.o`, `fixtures/libprov.so`, `fixtures/libprov.pic.so`,
+`fixtures/libprov.opt.so`.  In the examples, `EXAMPLE_FIXTURE_DIR` and the
+loader adapter choose the name.
+
+The **firmware** file (`<name>-hwd`, `.elf`, `.hex`) is what OpenOCD flashes.
+The module files stay on the host for semihosting, or on SD/flash for the other
+front-ends.
+
+### 4.9.7 What the parser does *not* do in this phase
+
+At the end of steps 1–8:
+
+* the ELF has been validated and read;
+* the right bytes are at the right runtime addresses;
+* `.bss` is zeroed;
+* the section/segment tables are still needed and are kept (in the source span,
+  the `elf_image`, or the loader's own metadata).
+
+No relocation has been applied, no imported symbol has been resolved, no
+constructor has run, and no cache has been published.  Those are the next
+phase.
+
+### 4.9.8 A complete semihosting read + load
+
+AArch32 (`SVC 0x123456`):
+
+```cpp
+using u32 = std::uint32_t;   // plus <cstdint>, <cstring>, <span>
+
+static unsigned semi(unsigned op, const void* arg) {
+    register unsigned r0 __asm__("r0") = op;
+    register const void* r1 __asm__("r1") = arg;
+    __asm__ volatile("svc 0x123456" : "+r"(r0) : "r"(r1) : "memory", "lr");
+    return r0;
+}
+
+// SYS_OPEN=0x01, SYS_CLOSE=0x02, SYS_READ=0x06, SYS_FLEN=0x0C
+std::span<const std::byte> read_file(const char* path, std::byte* buf, std::size_t cap) {
+    u32 open_args[3] = {(u32)path, 1u, (u32)strlen(path)};   // mode 1 = "rb"
+    int h = (int)semi(0x01, open_args);
+    if (h < 0) return {};
+    u32 handle = (u32)h;
+    std::size_t n = semi(0x0C, &handle);                     // SYS_FLEN
+    if (n == 0 || n > cap) { semi(0x02, &handle); return {}; }
+    u32 read_args[3] = {handle, (u32)buf, (u32)n};
+    if (semi(0x06, read_args) != 0) { semi(0x02, &handle); return {}; }
+    semi(0x02, &handle);                                     // SYS_CLOSE
+    return {buf, n};
+}
+```
+
+Cortex-M uses `BKPT 0xAB` instead of `SVC`; the rest is identical.
+
+Then:
+
+```cpp
+auto bytes = read_file("floatlib.rel.o", buffer, sizeof buffer);
+reloc::load(bytes, arena, resolve);
+```
+
+or:
+
+```cpp
+loader::memory_byte_source src{bytes};
+auto h = fw::dlopen_source(src, "floatlib");
+```
+
+The loader call is where `elf_image::parse` or the ET_REL parser begins.
+
+### 4.9.9 Checks that belong to this phase
+
+The parser and the per-loader copy code are responsible for:
+
+* `e_ident` magic, `ELFCLASS32`, `ELFDATA2LSB`, `EM_ARM`, EABI5, no BE8;
+* `e_ehsize`, `e_phentsize`, `e_shentsize`, `e_shstrndx` sanity;
+* `p_filesz <= p_memsz`, `p_offset + p_filesz <= source size`;
+* `p_vaddr + p_memsz <= destination size`;
+* `SHF_ALLOC` sections fit the arena; `sh_addralign` respected;
+* `.bss` (`p_memsz > p_filesz`, or `SHT_NOBITS`) zeroed;
+* text/data windows not overlapped by two modules;
+* no integer wrap in `vaddr + memsz` or `offset + size`.
+
+Typical failures at this point (before any relocation):
+
+| Message | Meaning |
+|---|---|
+| `short read` / `SHORT_READ` | the file is truncated or the fd ended early |
+| `not an ELF` / `NOT_ELF` | wrong file or bad magic |
+| `not ARM32` / `NOT_ARM32` | wrong class, endianness or machine |
+| `ELF parse failed` | bad header sizes or EABI |
+| `segment exceeds buffer` | `exec_buf`/arena too small |
+| `R-X VA outside the text window` | wrong link script or wrong loader |
+| `need a split R-X / RW image` | a non-split `.so` for an XIP loader |
+
+### 4.9.10 The first call after the copy
+
+| Method | First relocation/patch call |
+|---|---|
+| `scl::reloc` | `apply_relocs()` (then `register_unwind`, `run_ctors`) |
+| `scl::static` | `populate_helper_sections()` then `patch_shlib()` |
+| `scl::xip-static` | `apply_rel_xip()` |
+| `scl::optimal` | the relocation loop in `nopic.cpp` (`RELATIVE` skip, `ABS32`/... apply) |
+| `scl::dynamic-nolib` | `reloc_applier::apply_rel()` |
+| `scl::dynamic-newlib` | `relocator::compute()` then `apply_plan()` |
+| `scl::xip-dynamic-*` | `apply_rel_xip()` (or the RAM-fallback path) |
+| `scl::overlay` | none; the copy is the load |
+
+After that phase, the loader may clean/invalidate caches, register
+`.ARM.exidx`, run `.init_array`, and publish the module.
+
+---
+
 # 5. Where `common-elf-reader` is used — the complete matrix
 
 Legend for the table:
