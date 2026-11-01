@@ -1145,6 +1145,342 @@ The module and firmware must agree.  `check_arm_abi()` compares
 
 ---
 
+# Part 6 — Configure, build, and test
+
+## 6.1 Prerequisites
+
+| Tool | Version used here | Purpose |
+|---|---|---|
+| `arm-none-eabi-gcc/g++` | xPack 15.2.1 | firmware and modules |
+| CMake | 3.20 or newer | every suite |
+| OpenOCD | xPack 0.12.0 | flashing and semihosting |
+| a port working copy | `micro-os-plus-iii-cortexm` or `-aarch32` | board support, linker scripts, `hw.sh` |
+| a probe | CMSIS-DAP / WCH-Link / XV-Link | one per board |
+
+The suites default to the port paths under `/home/dan/Desktop/...`; override with
+`-DUOS_PORT_DIR=...` (or the `UOS_PORT_DIR` environment variable for the run
+scripts).
+
+```sh
+export PATH="$HOME/.local/xPacks/@xpack-dev-tools/arm-none-eabi-gcc/15.2.1-1.1.1/.content/bin:$PATH"
+```
+
+## 6.2 Configure and build a firmware with a loader
+
+The loader is a CMake INTERFACE source library: its `.cpp` compile into your
+firmware.
+
+```cmake
+add_subdirectory(SCL-shared scl)
+
+add_executable(my_firmware ...)
+target_link_libraries(my_firmware PRIVATE
+    micro-os-plus::cortexm        # or micro-os-plus::aarch32
+    scl::dynamic-nolib)           # the chosen loader
+```
+
+Or choose one case and link the alias:
+
+```sh
+cmake -S . -B build \
+  -DCMAKE_TOOLCHAIN_FILE=/path/to/micro-os-plus-iii/cmake/toolchains/arm-none-eabi.cmake \
+  -DSCL_LOADER=optimal \
+  -DSCL_HOSTED=OFF
+cmake --build build -j8
+```
+
+`SCL_LOADER` accepts: `relocatable`, `static-full-ram`, `static`, `optimal`,
+`dynamic-nolib`, `dynamic-newlib`, `overlay`.  `SCL_HOSTED=ON` is required for
+`scl::dynamic-newlib` (and for `collect_relocations()` / the hosted relocation
+planner).
+
+For a XIP loader the firmware's linker script must reserve the windows and the
+module must be linked at them; see `xip-split.ld` and `nopic-split.ld` in the
+test suites.
+
+Provide the hooks your system needs:
+
+```cpp
+extern "C" void scl_loader_lock(void)   { /* recursive mutex/spinlock */ }
+extern "C" void scl_loader_unlock(void) { /* ... */ }
+extern "C" void scl_cache_clean(const void* a, std::size_t n) { /* DCCMVAC */ }
+extern "C" void scl_cache_invalidate(const void* a, std::size_t n) { /* ICIMVAU */ }
+extern "C" void scl_publish_release(void) { __atomic_thread_fence(__ATOMIC_RELEASE); }
+extern "C" void scl_log_puts(const char* s) { /* UART or semihosting */ }
+extern "C" void scl_log_putc(char c) { /* ... */ }
+```
+
+The weak defaults are a no-op lock, barrier-only cache hooks and a silent log.
+They are fine for a single-core bare-metal bring-up, not for an RTOS or SMP.
+
+## 6.3 Build a module
+
+The exact flags matter more than the file name.  The four forms:
+
+```sh
+# 1. ET_REL for scl::reloc  (Cortex-A7 example)
+arm-none-eabi-g++ -mcpu=cortex-a7 -mthumb -mfloat-abi=hard -mfpu=neon-vfpv4 \
+  -mlong-calls -mword-relocations -fno-pic -Os -r -nostdlib \
+  -Iinclude -x c++ lib.cpp -o lib.rel.o
+
+# 2. r10 PIC .so for dynamic-nolib / xip-dynamic-*  (split script)
+arm-none-eabi-g++ -mcpu=cortex-a7 -mthumb -mfloat-abi=hard -mfpu=neon-vfpv4 \
+  -fpic -msingle-pic-base -mpic-register=r10 -mno-pic-data-is-text-relative \
+  -O0 -shared -nostartfiles -nostdlib -nodefaultlibs -Wl,-E -Wl,-Bsymbolic \
+  -T xip-split.ld -Iinclude -x c++ lib.cpp -o lib.so
+
+# 3. Plain -fPIC .so for static / dynamic-newlib
+arm-none-eabi-g++ -mcpu=cortex-a7 -mthumb -mfloat-abi=hard -mfpu=neon-vfpv4 \
+  -fPIC -O0 -shared -nostartfiles -nostdlib -nodefaultlibs -Wl,-E \
+  -Iinclude -x c++ lib.cpp -o lib.pic.so
+
+# 4. No-pic fixed-window .so for optimal
+arm-none-eabi-g++ -mcpu=cortex-a7 -mthumb -mfloat-abi=hard -mfpu=neon-vfpv4 \
+  -fno-pic -mword-relocations -mlong-calls -O0 -shared -nostartfiles -nostdlib \
+  -nodefaultlibs -Wl,-E -Wl,-z,max-page-size=0x100 -Wl,--unresolved-symbols=ignore-all \
+  -T nopic-split.ld -Iinclude -x c++ lib.cpp -o lib.opt.so
+```
+
+Use `-marm` instead of `-mthumb` to build an ARM-state module (A32); the parser
+and relocation engine handle either.  Do not mix hard- and soft-float modules:
+`check_arm_abi()` catches it.
+
+The reusable version of these commands is the `fixture()` / `fixture_arm()`
+function in the test-suite `CMakeLists.txt`; copy that rather than retyping the
+flags.
+
+## 6.4 Add a host test
+
+Host tests live in `SCL-shared-new/tests/` and are compiled by
+`tests/run.sh` with the host `g++`.
+
+1. Add `tests/my_test.cpp`.  Include the headers you need, for example:
+
+```cpp
+#include "loader/elf-image.hpp"
+#include "loader/sources/memory-byte-source.hpp"
+#include <cstdio>
+
+int main() {
+    std::byte image[4] = {std::byte{0x7f}, std::byte{'E'},
+                          std::byte{'L'}, std::byte{'F'}};
+    loader::memory_byte_source src{{image, sizeof image}};
+    auto img = loader::elf_image::parse(src);
+    if (img) { std::puts("unexpected parse"); return 1; }
+    std::puts("short header rejected");
+    return 0;
+}
+```
+
+2. Add it to `tests/run.sh` next to the existing tests:
+
+```sh
+echo "=== build my test ==="
+"$CXX" -std=c++20 -O1 -g "${INC[@]}" \
+    "$HERE/my_test.cpp" "$ROOT/common-elf-reader/src/elf-image.cpp" \
+    -o "$OUT/my-test"
+"$OUT/my-test"
+```
+
+`INC` already contains `include`, `include/scl` and
+`common-elf-reader/include`.  `run.sh` uses `set -e`; a non-zero exit fails the
+run.
+
+3. Run:
+
+```sh
+cd SCL-shared-new
+./tests/run.sh
+```
+
+The parser's own host tests live in `common-elf-reader/test/` (`elf-reader-test`
+and `arm-reloc-test`); they need the `411ce-100Mhz.elf` fixture, which is not
+tracked in the parser repository (copy it beside the test binary if missing).
+
+## 6.5 Add an on-target test
+
+An on-target test is one `uos_add_app` in a suite under `SCL-TESTS-shared-new/`.
+The suite owns the board, linker script, fixtures and the `run-all-*.sh` entry.
+
+A minimal test source:
+
+```cpp
+#include <cmsis-plus/rtos/os.h>
+#include <hw_result.hpp>
+#include <uart.hpp>
+
+using namespace os::rtos;
+
+int os_main(int, char*[]) {
+    (void)interrupts::uncritical_section::enter();
+    uart::uart1 << "my-test: starting\n";
+
+    // ... load the module, call it, check the result ...
+
+    const bool ok = true;
+    uart::uart1 << (ok ? "RESULT: PASS\n" : "RESULT: FAIL\n");
+    if (ok) hw_result::ok();
+    hw_result::fail();
+    return 0;
+}
+```
+
+The suite's CMake entry:
+
+```cmake
+uos_add_app("my-test-hwd"
+    SOURCES src/my-test.cpp src/embed-arena.S ${BOARD_SUPPORT}
+    NCPU 3                                  # 1 on WeAct, 2 on Pi-Zero, 3 on Lyra
+    LINKER_SCRIPT "${BOARD_LD}"
+    DEFINES TRACE SEMIHOST HW_BUILD
+    INCLUDES "${BOARD_INC}" ...
+    LIBRARIES micro-os-plus::aarch32 scl::dynamic-nolib)
+add_dependencies("my-test-hwd" fixtures)
+set_target_properties("my-test-hwd" PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test")
+list(APPEND SCL_TESTS "my-test-hwd")
+```
+
+Then add `my-test` to the `TESTS=(...)` array in the board's
+`run-all-*.sh` (or run it directly with `hw.sh`).
+
+Rules:
+
+* load before releasing other cores; constructors and relocations must finish
+  before the SMP release;
+* use `hw_result::ok()`/`fail()` so OpenOCD sees a semihosted exit; print
+  `RESULT: PASS`/`FAIL` for the log parser;
+* keep the fixture/arena lifetime alive until the test ends;
+* for a register-level test, use the port's `BOARD_SUPPORT` and `BOARD_INC`;
+* if the test needs a module file, add it to the suite's fixture build and to
+  the `add_dependencies` line.
+
+## 6.6 Add an example app
+
+Examples under `SCL-EXAMPLES-shared-new/<board>/` follow a small shape:
+
+```text
+apps/myapp.cpp        kAppName, app_load(), app_start(), app_on_core()
+loaders/<loader>.cpp  lib_load(), lib_sym(), lib_unload()
+common/               boot, semihosting, hooks, SD, arena
+CMakeLists.txt        fixture matrix + lyra_app()/pizero_app() calls
+run-all-*.sh          the test list
+```
+
+Add the app to the CMake matrix (one call per loader) and to the runner's list;
+the CMake already builds the fixture forms and the ELF.  Use an existing app
+(`float`, `sd`, `combo`) as the template.
+
+## 6.7 Run the tests
+
+### Host
+
+```sh
+cd SCL-shared-new
+./tests/run.sh
+```
+
+No board, no probe.
+
+### WeAct F411CE
+
+```sh
+cd SCL-TESTS-shared-new
+./run-all-weact.sh                 # all 22
+./run-all-weact.sh static          # regex filter
+SKIP_SPI=1 ./run-all-weact.sh      # skip the two W25Q64 tests
+DRY_RUN=1 ./run-all-weact.sh       # print commands, do not flash
+```
+
+Tunables: `RUN_MS`, `WALL_MS`, `GAP`, `LOGDIR`.  Logs:
+`logs/weact-<timestamp>/`.
+
+### Pi-Zero RP2350B
+
+```sh
+cd SCL-TESTS-shared-new
+./pico2-pizero-shared/run-all-pizero.sh
+./pico2-pizero-shared/run-all-pizero.sh psram
+GAP=5 ./pico2-pizero-shared/run-all-pizero.sh
+POWER_CYCLE=1 ./pico2-pizero-shared/run-all-pizero.sh
+```
+
+Tunables: `SECS` (default 240), `GAP`, `BUILD`, `UOS_PORT_DIR`.  Logs:
+`pico2-pizero-shared/logs/pizero-<timestamp>/`.
+
+### Luckfox Lyra B
+
+```sh
+cd SCL-TESTS-shared-new
+./luckfox-lyra-shared/run-all-lyra.sh        # 48
+./luckfox-lyra-shared/run-all-lyra.sh fix6   # subset
+./luckfox-lyra-shared/run-all-lyra.sh        # SECS/GAP/KHZ are env vars
+```
+
+The ARM-state suite is separate:
+
+```sh
+cd luckfox-lyra-arm-shared
+cmake -S . -B build
+cmake --build build --target arm-tests -j8
+for t in arm-reloc arm-static arm-optimal arm-dynamic-nolib \
+         arm-dynamic-newlib arm-xip-static arm-xip-dynamic-nolib \
+         arm-xip-dynamic-newlib arm-overlay; do
+  BUILD=$PWD/build OPENOCD=... \
+    /path/to/micro-os-plus-iii-aarch32/test/boards/luckfox-lyra/hw.sh "$t" 180
+done
+```
+
+### One test, directly
+
+Every board has the same interface:
+
+```sh
+BUILD=/path/to/build \
+OPENOCD=/path/to/openocd-linebuf.sh \
+  /path/to/port/test/boards/<board>/hw.sh <test> [seconds]
+```
+
+`hw.sh list` shows the tests in that build.  The runner never opens the UART;
+the firmware prints the same results there for a terminal.
+
+### Probe selection
+
+* **Pi-Zero**: XV-Link `0416:5951`, unique.
+* **WeAct / Lyra**: both use WCH-Link `1a86:8011`.  Some units share the USB
+  serial; OpenOCD then picks the first.  Select by USB bus/port with the
+  `hide_libusb.so` shim (`HIDE_BUS`, `HIDE_PORTS`), by the pyusb hold helper, or
+  simply unplug the other WCH-Link for the run.
+* **Logs**: each run tees the semihosting console and writes a per-test log; the
+  summary is `PASS=<n> FAIL=<n>`.
+
+### What a pass means
+
+The test prints `RESULT: PASS` and calls `hw_result::ok()`, which issues a
+semihosting `SYS_EXIT`.  The runner treats a missing marker or a timeout as a
+failure.  A missing-import load can succeed; call `first_missing_import()` after
+the set to catch it.
+
+## 6.8 Clean-build checklist
+
+```sh
+# 1. toolchain on PATH
+# 2. correct port working copy
+# 3. correct board/probe
+# 4. configure with the right loader / hosted flag
+# 5. build the fixtures before the firmware (add_dependencies)
+# 6. flash the firmware, not the module
+# 7. read the semihosting log, not only the UART
+```
+
+Common mistakes: building a `-fPIC` module for `reloc` (it expects ET_REL);
+using a no-pic module with a GOT loader (or the reverse); forgetting
+`SCL_HOSTED=ON`; forgetting `bind_host_imports()` before flashing an XIP PLT;
+forgetting the loader lock/cache hooks on an SMP board; and running a test whose
+fixture file has the wrong extension for the loader.
+
+---
+
 # Appendix A — Where the full source is
 
 | What | File |
