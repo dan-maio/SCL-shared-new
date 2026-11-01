@@ -86,8 +86,9 @@ the A32/T32 relocation engine (`include/loader/arm-reloc.hpp`), the ARM build
 attributes reader (`include/loader/arm-attributes.hpp`), the ABI check
 (`include/loader/arm-abi.hpp`) and the hardened `elf-image.cpp`.
 
-`SCL-TESTS-shared-new` pins `SCL-shared` at `eb2ae55`; the nested parser submodule
-is therefore `f650889`.  A loader working tree can be used with
+`SCL-TESTS-shared-new` and `SCL-EXAMPLES-shared-new` pin `SCL-shared` at
+`aaf2120` (the `eb2ae55` code plus this documentation); the nested parser
+submodule is therefore `f650889`.  A loader working tree can be used with
 `-DSCL_DIR=/path/to/SCL-shared-new` in the ARM test suite; the committed default
 is the `../SCL-shared` submodule.
 
