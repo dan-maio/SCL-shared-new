@@ -114,6 +114,11 @@ its rules.
 
 ## Further documentation
 
+For the complete, plain-English guide to every loader method — where the ELF
+parser is used in each one and how semihosting fits — see
+[`docs/USING-SHARED-LIBRARIES.md`](docs/USING-SHARED-LIBRARIES.md) and
+[`docs/USING-SHARED-LIBRARIES.pdf`](docs/USING-SHARED-LIBRARIES.pdf).
+
 The loader-model guides and test benches live in the sibling repo
 `SCL-TESTS-shared-new` (`docs/LOADER-CHOICE.md`, `docs/import_in_project_full.md`,
 `docs/resolving-module-imports.md`). Worked WeAct examples are in
