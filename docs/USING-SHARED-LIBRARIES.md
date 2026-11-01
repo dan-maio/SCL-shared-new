@@ -1259,6 +1259,423 @@ is an argument-passing bug that no relocation can fix.
 
 ---
 
+# 11. Source code examples
+
+The snippets below are the **minimal shapes** of each method: the calls and the
+ownership.  Real applications add the file reader, error printing, buffer
+definitions and board hooks; the complete working versions are listed in §11.10.
+All snippets assume the loader's CMake target is linked and the headers below are
+included.
+
+## 11.0 A common symbol source and a file reader
+
+Most examples first define what main exports and how a module asks for it.
+
+```cpp
+#include "scl/symtab-register.h"
+
+extern "C" int      host_f(int);
+extern "C" unsigned HOST_K;
+
+// A hand-built table, or SCL_REGISTER_SYM(host_f) in the defining TU.
+static const scl_sym_entry kSyms[] = {
+    {"host_f", static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&host_f))},
+    {"HOST_K", static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&HOST_K))},
+};
+
+// loader::symbol_source = result<uint32_t>(*)(void*, string_view)
+static loader::result<std::uint32_t>
+resolve(void*, std::string_view name) {
+    for (const auto& e : kSyms)
+        if (name == e.name) return e.addr;
+    return loader::unexpected(loader::error::SYMBOL_NOT_FOUND);
+}
+```
+
+`SCL_REGISTER_SYM(host_f)` in the definition's translation unit puts the same
+entry into the `scl_syms` linker section; `scl::symtab::source_registered()`
+returns a `loader::symbol_source` over it.  With that source you do not need the
+hand table.
+
+The file reader used by the snippets is the one from §4.9.8:
+
+```cpp
+// AArch32 SVC 0x123456, or Cortex-M BKPT 0xAB, plus SYS_OPEN/FLEN/READ/CLOSE.
+std::span<const std::byte>
+read_semihost_file(const char* path, std::byte* buf, std::size_t cap);
+```
+
+## 11.1 `scl::reloc`
+
+```cpp
+#include "reloc/reloc-loader.hpp"
+
+alignas(8) static std::byte arena[96 * 1024];   // 4 slots of 24 KiB
+
+bool load_floatlib() {
+    std::byte file[32 * 1024];
+    auto bytes = read_semihost_file("floatlib.rel.o", file, sizeof file);
+    if (bytes.empty()) return false;
+
+    std::span<const std::byte> images[] = {bytes};
+    auto set = reloc::load_set(images, arena, resolve);
+    if (!set) return false;
+
+    auto add = reinterpret_cast<float (*)(float, float)>(
+        reloc::sym(*set, "float_add"));
+    if (!add) return false;
+    float v = add(2.5f, 3.5f);                   // 6.0
+    (void)v;
+    return true;
+}
+```
+
+For two modules that import from each other, pass two spans to `load_set()`; it
+places both before resolving, so a cycle is fine.  For a single extra module,
+`reloc::load(bytes, slot_arena, resolve)` and `reloc::sym(module, name)`.
+
+`reloc::sym()` returns the address with its own Thumb/ARM bit.  The function
+pointer call above is valid for ARM state; for a Thumb module the compiler's
+function-pointer call uses `blx`.  A module using r10 needs a `pic_call_*`
+wrapper instead (see §9.4).
+
+## 11.2 `scl::static`
+
+```cpp
+#include "static/module.h"
+
+alignas(8) static std::uint8_t exec_buf[64 * 1024];
+static elf_loader::symbol_table syms;
+
+bool load_prov() {
+    syms.add_entries(kSyms, sizeof kSyms / sizeof kSyms[0]);
+
+    scl::Module mod;
+    if (!mod.load_file("libprov.pic.so", exec_buf, sizeof exec_buf, &syms))
+        return false;
+
+    auto prov = mod.sym<int (*)(int)>("prov_value");
+    if (!prov) { mod.unload(); return false; }
+    int v = prov(5);                             // 105
+    (void)v;
+
+    mod.unload();                                // runs .fini_array, reverts main
+    return true;
+}
+```
+
+From memory, replace `load_file` with:
+
+```cpp
+mod.load_buf(reinterpret_cast<const std::uint8_t*>(bytes.data()),
+             static_cast<std::uint32_t>(bytes.size()),
+             exec_buf, sizeof exec_buf, &syms);
+```
+
+To size the buffer instead of guessing:
+
+```cpp
+std::uint32_t need = scl::Module::image_size("libprov.pic.so");
+```
+
+## 11.3 `scl::xip-static`
+
+```cpp
+#include "xip/static/adapter.hpp"
+
+// The image is a writable copy at provision time (RAM), then programmed to
+// flash/DRAM.  At load time it is the flash-resident blob.
+extern std::uint8_t module_image[];
+extern std::uint32_t module_size;
+
+bool provision_and_load() {
+    std::span<std::byte> writable{module_image, module_size};
+    xip::stat::bind_host_imports(writable);      // before flashing (JUMP_SLOTs)
+
+    // ... program module_image to flash here, if this is real flash ...
+
+    xip::stat::SModule m;
+    if (!xip::stat::load(std::span<const std::byte>{module_image, module_size}, m))
+        return false;
+
+    auto prov = reinterpret_cast<int (*)(int)>(xip::stat::resolve(m, "prov_value"));
+    if (!prov) return false;
+    int v = prov(5);                             // 105
+    (void)v;
+    return true;
+}
+```
+
+`bind_host_imports()` is optional only if every external function import is
+already bound at link time; for a normal `.so` with a PLT, it is required before
+the image is written to write-once flash.  On a DRAM "XIP" region it can be done
+at boot.
+
+## 11.4 `scl::optimal`
+
+```cpp
+#include "xip/static/nopic.hpp"
+#include "scl/symtab-runtime.hpp"
+
+bool load_prov_optimal(std::span<const std::byte> bytes) {
+    xip::nopic::set_main_symbols(scl::symtab::source_registered());
+
+    xip::nopic::PModule m;
+    if (!xip::nopic::load(bytes, m)) return false;
+    xip::nopic::resolve_all();                   // fill cyclic imports
+
+    auto prov = reinterpret_cast<int (*)(int)>(xip::nopic::resolve(m, "prov_value"));
+    if (!prov) return false;
+    int v = prov(5);                             // 105
+    (void)v;
+    return true;
+}
+```
+
+`patch_main(m)` after the load lets the app call the module **by name** through
+main's GOT; `resolve_all()` is the call that makes mutually dependent modules
+work.  The image must be linked at the `_sxip_text_*`/`_sxip_data_*` windows.
+
+## 11.5 `scl::dynamic-nolib`
+
+```cpp
+#include "dynamic-nolib/dl.hpp"
+
+bool load_prov_nolib(std::span<const std::byte> bytes) {
+    fw::dl_set_symtab(kSyms, sizeof kSyms / sizeof kSyms[0]);
+    fw::dl_set_lazy_binding(false);              // no loader code after publish
+
+    loader::memory_byte_source src{bytes};
+    auto h = fw::dlopen_source(src, "libprov");
+    if (!h) return false;
+
+    auto p = fw::dlsym(**h, "prov_value");
+    if (!p) { fw::dlclose(**h); return false; }
+    int v = reinterpret_cast<int (*)(int)>(*p)(5);   // 105
+    (void)v;
+
+    fw::dlclose(**h);
+    return true;
+}
+```
+
+`h` is a `result<handle*>`: `*h` is `handle*`, `**h` is `handle&`.  From a file
+descriptor use:
+
+```cpp
+auto f = loader::fd_byte_source::open_file("libprov.so");
+auto h = fw::dlopen_source(*f, "libprov");
+```
+
+## 11.6 `scl::dynamic-newlib`
+
+```cpp
+#include "dynamic-newlib/dynamic-linker.hpp"
+
+bool load_prov_newlib(std::span<const std::byte> bytes) {
+    firmware::link_context ctx;
+    ctx.set_symtab(reinterpret_cast<const firmware::sym_entry*>(kSyms),
+                   sizeof kSyms / sizeof kSyms[0]);
+
+    firmware::dynamic_linker linker(ctx);
+    loader::memory_byte_source src{bytes};
+    auto lib = linker.load_from_source(src);
+    if (!lib) return false;
+
+    auto p = linker.lookup(*lib, "prov_value");
+    if (p) {
+        int v = reinterpret_cast<int (*)(int)>(*p)(5);   // 105
+        (void)v;
+    }
+    linker.unload(*lib);
+    return p.has_value();
+}
+```
+
+With a `-pie -Wl,-E` firmware, leave `ctx` empty; `link_context` reads main's own
+`_DYNAMIC`/`.dynsym`.  The external table is for non-PIE firmware and for
+`collect_buffered()` (see §11.9).
+
+## 11.7 `scl::xip-dynamic-nolib` and `scl::xip-dynamic-newlib`
+
+```cpp
+#include "xip/dynamic-nolib/adapter.hpp"   // or xip/dynamic-newlib/adapter.hpp
+
+void* load_prov_xip(std::span<std::byte> writable, std::span<const std::byte> image) {
+    xip::nolib::set_symtab(kSyms, sizeof kSyms / sizeof kSyms[0]);
+    xip::nolib::patch_main_imports(writable);    // provision time
+
+    void* h = xip::nolib::dlopen(image, "libprov");
+    if (!h) return nullptr;
+
+    auto prov = reinterpret_cast<int (*)(int)>(xip::nolib::dlsym(h, "prov_value"));
+    (void)prov;
+    // xip::nolib::dlclose(h) when done
+    return h;
+}
+```
+
+For the newlib adapter, replace `xip::nolib` with `xip::newlib` and cast the
+table to `const firmware::sym_entry*` (the layouts are identical).  The adapter
+decides at load time whether the image is really XIP; if it is not, it falls back
+to the copy-whole path.
+
+## 11.8 `scl::overlay`
+
+```cpp
+#include "overlay/overlay.h"
+
+extern "C" {
+extern std::uint8_t _ovl_vma[], _ov1_lma[], _ov1_size[], _ov2_lma[], _ov2_size[];
+int ov1_use_fm(void);       // linked-in symbol, resolved by the host linker
+}
+
+static const scl_overlay_module mods[] = {
+    {_ovl_vma, _ov1_lma, static_cast<std::uint32_t>(
+         reinterpret_cast<std::uintptr_t>(_ov1_size)), "ov1"},
+    {_ovl_vma, _ov2_lma, static_cast<std::uint32_t>(
+         reinterpret_cast<std::uintptr_t>(_ov2_size)), "ov2"},
+};
+static scl_overlay_region region;
+
+bool use_ov1() {
+    scl_overlay_init(&region, mods, 2);
+    if (scl_overlay_load(&region, 0) != 0) return false;
+    int v = ov1_use_fm();       // module now resident in the shared window
+    (void)v;
+    return true;
+}
+```
+
+`_ov1_size` is a linker symbol whose **address** is the size; the cast above
+turns it into the number.  Only one module is resident at a time; loading index 1
+overwrites index 0.
+
+## 11.9 Parser-only examples
+
+### Parse an image and walk its loadable segments
+
+```cpp
+#include "loader/elf-image.hpp"
+#include "loader/sources/memory-byte-source.hpp"
+
+void inspect(std::span<const std::byte> bytes) {
+    loader::memory_byte_source src{bytes};
+    auto img = loader::elf_image::parse(src);
+    if (!img) return;
+
+    for (loader::elf::half i = 0; i < img->header().e_phnum; ++i) {
+        loader::elf::Phdr ph{};
+        if (!img->program_header(i, ph)) continue;
+        if (ph.p_type != loader::elf::PT_LOAD) continue;
+        // ph.p_vaddr, ph.p_memsz, ph.p_filesz, ph.p_flags
+    }
+
+    if (auto text = img->find_section(".text"); text && text->sh_size) {
+        std::byte buf[256];
+        std::size_t n = text->sh_size < sizeof buf ? text->sh_size : sizeof buf;
+        if (img->source().read_at(text->sh_offset, {buf, n})) {
+            // buf[0..n) is the start of .text
+        }
+    }
+}
+```
+
+### Parse directly from a file descriptor
+
+```cpp
+#include "loader/sources/fd-byte-source.hpp"
+
+auto f = loader::fd_byte_source::open_file("libprov.pic.so");
+if (f) {
+    auto img = loader::elf_image::parse(*f);
+    // ...
+}
+```
+
+### Build main's symbol table over semihosting, one read per section
+
+```cpp
+#include "scl/symtab-runtime.hpp"
+
+std::byte symtab_buf[4096];
+char      strtab_buf[4096];
+scl::symtab::entry entries[64];
+
+std::size_t n = scl::symtab::collect_buffered(
+    *img, entries, 64, symtab_buf, sizeof symtab_buf,
+    strtab_buf, sizeof strtab_buf);
+// entries[0..n) are layout-compatible with firmware::sym_entry
+ctx.set_symtab(reinterpret_cast<const firmware::sym_entry*>(entries), n);
+```
+
+### Compile-time registration (no file, no parser)
+
+```cpp
+#include "scl/symtab-register.h"
+#include "scl/symtab-runtime.hpp"
+
+extern "C" int host_f(int);
+SCL_REGISTER_SYM(host_f);
+
+loader::symbol_source main_syms = scl::symtab::source_registered();
+```
+
+### Use the A32 relocation engine directly
+
+```cpp
+#include "loader/arm-reloc.hpp"
+
+// type = the R_ARM_* number, p = instruction/slot, S = symbol, A = addend,
+// P = relocation site.
+std::uint32_t addend = 0;
+if (loader::arm::decode_addend(type, p, addend)) {
+    loader::arm::context c{S, addend, P, loader::arm::isa::arm};
+    if (loader::arm::apply(type, p, c) != loader::error::OK) {
+        // RELOC_OVERFLOW or RELOC_INTERWORK
+    }
+}
+```
+
+### Check the ARM ABI
+
+```cpp
+#include "loader/arm-attributes.hpp"
+#include "loader/arm-abi.hpp"
+
+auto a = loader::read_arm_attributes(*img);
+if (a.valid && a.has_vfp_args && a.vfp_args == 1) {
+    // the module uses VFP registers for arguments
+}
+if (auto r = loader::check_arm_abi(*img, true); !r) {
+    // the module and the hard-float firmware disagree
+}
+```
+
+## 11.10 Where to find the full working versions
+
+The snippets above leave out board setup, error text and the exact file reader.
+The complete versions are in:
+
+| What | File |
+|---|---|
+| All loader branches, one app | `SCL-TESTS-shared-new/luckfox-lyra-shared/src/fixtures-main.cpp` |
+| Semihosting fixture reader (AArch32) | same file, `read_fixtures()` |
+| Lyra examples: boot, semihosting, SD | `SCL-EXAMPLES-shared-new/luckfox-lyra/common/lyra.cpp` |
+| Lyra loader adapters | `SCL-EXAMPLES-shared-new/luckfox-lyra/loaders/*.cpp` |
+| WeAct examples: boot and loaders | `SCL-EXAMPLES-shared-new/float-*/`, `common/` of each |
+| Pi-Zero examples | `SCL-EXAMPLES-shared-new/pizero/` |
+| Pi-Zero tests (all methods) | `SCL-TESTS-shared-new/pico2-pizero-shared/src/` |
+| Optimal raw test | `SCL-TESTS-shared-new/optimal-shared/test-ram/src/main.cpp` |
+| Dynamic raw test | `SCL-TESTS-shared-new/dynamic-shared/test-dynamic/src/` |
+| Static raw test | `SCL-TESTS-shared-new/static-shared/test-static/src/` |
+| Overlay test | `SCL-TESTS-shared-new/overlay-shared/test-overlay/test1/src/` |
+
+Those files are the authority; if a snippet and a test differ, the test is what
+runs on hardware.
+
+---
+
 # Glossary
 
 * **Main / firmware** — the program that contains the loader and calls the
