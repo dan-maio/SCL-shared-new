@@ -5,9 +5,18 @@ author: "SCL / Luckfox Lyra B work"
 date: "2026-11-01"
 ---
 
+> **Implementation status (2026-11-01).**  The P0 items in this document are
+> implemented in `SCL-shared-new` `eb2ae55`, with `common-elf-reader` now a
+> submodule of `elf32_read_parse-new.git` at `f650889` (the A32/T32 relocation
+> engine and ARM build attributes).  The ARM-state test suite
+> `SCL-TESTS-shared-new/luckfox-lyra-arm-shared/` has 9 tests — one per SCL
+> loader — and all 9 pass on the Luckfox Lyra B.  The P1/P2 items below
+> (per-ISA trampolines, ARM EH in every adapter, the remaining relocation
+> forms, veneers) are still open and are the reference for the next stage.
+
 # 1. Executive summary
 
-`SCL-shared-new` and its vendored `common-elf-reader` were written for Cortex-M:
+`SCL-shared-new` and its `common-elf-reader` were written for Cortex-M:
 the loader code, the relocation engine in `scl::reloc`, the trampolines and several
 tests assume that **every loaded function is Thumb**.  That is true on Cortex-M, and
 it is almost true for the Luckfox Lyra examples because their fixtures are built with
@@ -46,7 +55,9 @@ are:
 
 This document is the implementation plan.  It records what exists, what is missing,
 the exact relocation formulas and encodings, the required code changes per component,
-a test matrix, and a priority order.  **No source change is made by this document.**
+a test matrix, and a priority order.  The P0 source changes are in `eb2ae55`
+and the parser submodule `f650889`; the rest of the document is the reference
+for the open P1/P2 work.
 
 The recommended minimum (P0) is: fix bit 0, add the A32 relocation engine
 (`CALL`, `JUMP24`, `MOVW/MOVT`, `THM_*` counterparts, `V4BX`, `PREL31`), wire it into
@@ -59,8 +70,8 @@ The recommended minimum (P0) is: fix bit 0, add the A32 relocation engine
 | Item | Value |
 |---|---|
 | Loader repository | `SCL-shared-new`, commit `a39e0f0` |
-| Parser | `common-elf-reader/`, source-identical to `elf32_read_parse.git` `ddaa0e6` |
-| Parser repository | `/home/dan/Downloads/GIT/elf32_read_parse.git` |
+| Parser | `common-elf-reader/` submodule, `elf32_read_parse-new.git` `f650889` |
+| Parser repository | `/home/dan/Downloads/GIT/elf32_read_parse-new.git` |
 | Target board | Luckfox Lyra B, RK3506, 3x Cortex-A7 (ARMv7-A, A32 + T32) |
 | Existing consumer | `SCL-TESTS-shared-new/luckfox-lyra-shared`, `SCL-EXAMPLES-shared-new/luckfox-lyra` |
 | Existing fixture ISA | Thumb (`-mthumb`) in every Lyra test and example |
@@ -68,21 +79,21 @@ The recommended minimum (P0) is: fix bit 0, add the A32 relocation engine
 
 ## 2.1 The `common-elf-reader` integration
 
-In `SCL-shared-new`, `common-elf-reader/` is **vendored**, not a git submodule: there is
-no `.gitmodules` entry, and the directory is tracked as ordinary files.  Its sources
-are identical to `elf32_read_parse.git` `ddaa0e6`; only two untracked test fixtures
-(`test/411ce-100Mhz.elf`, `test-arm/411ce-100Mhz-stripped.elf`) differ.
+In `SCL-shared-new`, `common-elf-reader/` is now a **git submodule** of
+`/home/dan/Downloads/GIT/elf32_read_parse-new.git` at `f650889`.  That commit is
+the original `elf32_read_parse.git` `ddaa0e6` (the parser API is unchanged) plus
+the A32/T32 relocation engine (`include/loader/arm-reloc.hpp`), the ARM build
+attributes reader (`include/loader/arm-attributes.hpp`), the ABI check
+(`include/loader/arm-abi.hpp`) and the hardened `elf-image.cpp`.
 
-If the intent is to make it a real submodule, the ARM work has two integration steps:
+`SCL-TESTS-shared-new` pins `SCL-shared` at `eb2ae55`; the nested parser submodule
+is therefore `f650889`.  A loader working tree can be used with
+`-DSCL_DIR=/path/to/SCL-shared-new` in the ARM test suite; the committed default
+is the `../SCL-shared` submodule.
 
-1. commit the parser changes in `elf32_read_parse.git` (new tag/commit, e.g.
-   `arm-a32-support`);
-2. add the submodule entry in `SCL-shared-new/.gitmodules` pinned to that commit, and
-   change `add_subdirectory(common-elf-reader ...)` to the submodule path.
-
-Until then, the changes in this document must be made **in both** places (the standalone
-repository and the vendored copy), or the vendored copy must be regenerated from the
-repository after each change.
+Further parser changes belong upstream in `elf32_read_parse-new.git`; bump the
+submodule pointer in `SCL-shared-new` after each parser commit, rather than
+editing the submodule working tree.
 
 ---
 
@@ -795,8 +806,8 @@ Add `SCL-shared-new/tests/arm-reloc/`:
 
 ## 9.2 On-target tests (Luckfox Lyra B)
 
-Create `SCL-TESTS-shared-new/luckfox-lyra-arm-shared/` (or add a `TEST_ARM` variant to
-`luckfox-lyra-shared`) with:
+Implemented as `SCL-TESTS-shared-new/luckfox-lyra-arm-shared/`: 9 tests, one per
+loader, all passing at `eb2ae55`.  The matrix that was used:
 
 | Case | Firmware | Module | Expected |
 |---|---|---|---|

@@ -36,7 +36,7 @@ Items that need a board, an MPU map or an RTOS remain guidance.
 | Per-core arena allocator | **Not implemented** | `fw::image_arena()` is still global |
 | Missing-import reporting | **Implemented** | `first_missing_import()`, `include/loader/missing-import.hpp` |
 | Multi-core hardware validation | **Done for boot-time load** | `SCL-TESTS-shared-new/pico2-pizero-shared` (RP2350, µOS++ SMP) |
-| ARM-state (A32) module support | **Analysis + implementation plan** | `docs/ARM-A32-SUPPORT.md` |
+| ARM-state (A32) module support | **Implemented (P0); P1/P2 open** | `docs/ARM-A32-SUPPORT.md`; `SCL-TESTS-shared-new/luckfox-lyra-arm-shared` |
 
 ## What was changed relative to SCL-shared
 
